@@ -67,6 +67,16 @@ const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
+    href: '/ai-task',
+    label: 'AI Task',
+    icon: (active) => (
+      <svg {...iconProps(active)}>
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M12 7.5v5l3 2" />
+      </svg>
+    ),
+  },
+  {
     href: '/profil',
     label: 'Profil',
     icon: (active) => (
