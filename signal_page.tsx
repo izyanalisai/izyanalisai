@@ -1,4 +1,3 @@
-
 'use client'
 
 import { createClient } from '@/lib/supabase/client'
@@ -48,7 +47,6 @@ export default function SignalPage() {
     }
 
     load()
-
     return () => {
       active = false
     }
@@ -74,7 +72,6 @@ export default function SignalPage() {
   return (
     <main className="min-h-screen bg-[#0F172A] text-white px-4 py-6 max-w-[480px] mx-auto">
       <h1 className="text-xl font-bold">Sinyal AI</h1>
-
       <p className="text-slate-500 text-xs mt-1">
         Diperbarui setiap sesi perdagangan · DYOR
       </p>
@@ -90,7 +87,6 @@ export default function SignalPage() {
       <div className="mt-4 flex gap-2">
         {FILTERS.map((f) => {
           const active = filter === f.value
-
           return (
             <button
               key={f.value}
@@ -104,10 +100,7 @@ export default function SignalPage() {
                       color: '#fff',
                       borderColor: 'transparent',
                     }
-                  : {
-                      color: '#94A3B8',
-                      borderColor: 'rgba(255,255,255,0.1)',
-                    }
+                  : { color: '#94A3B8', borderColor: 'rgba(255,255,255,0.1)' }
               }
             >
               {f.label}
@@ -117,22 +110,15 @@ export default function SignalPage() {
       </div>
 
       <div className="mt-5 space-y-2">
-        {loading && (
-          <p className="text-slate-500 text-sm">
-            Memuat...
-          </p>
-        )}
+        {loading && <p className="text-slate-500 text-sm">Memuat...</p>}
 
         {!loading && filtered.length === 0 && (
-          <p className="text-slate-500 text-sm">
-            Belum ada sinyal aktif.
-          </p>
+          <p className="text-slate-500 text-sm">Belum ada sinyal aktif.</p>
         )}
 
         {!loading &&
           filtered.map((s) => {
             const dir = directionStyle[s.direction]
-
             return (
               <Link
                 key={s.id}
@@ -141,15 +127,9 @@ export default function SignalPage() {
               >
                 <div className="flex items-center justify-between">
                   <div className="min-w-0">
-                    <p className="font-semibold text-sm">
-                      {s.ticker}
-                    </p>
-
-                    <p className="text-slate-400 text-xs truncate">
-                      {s.name}
-                    </p>
+                    <p className="font-semibold text-sm">{s.ticker}</p>
+                    <p className="text-slate-400 text-xs truncate">{s.name}</p>
                   </div>
-
                   <span
                     className={`shrink-0 text-xs font-bold px-3 py-1 rounded-full ml-2 ${dir.bg} ${dir.text}`}
                   >
@@ -167,4 +147,3 @@ export default function SignalPage() {
     </main>
   )
 }
-
