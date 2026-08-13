@@ -15,7 +15,6 @@ type Stock = {
     price: number | null
     previous_close: number | null
     volume: number | null
-    market_cap: number | null
   } | null
 }
 
@@ -80,7 +79,7 @@ export default function ScreenerPage() {
         supabase
           .from('stocks')
           .select(
-            'id, ticker, name, sector_id, sectors ( name ), quotes ( price, previous_close, volume, market_cap )'
+            'id, ticker, name, sector_id, sectors ( name ), quotes ( price, previous_close, volume )'
           )
           .eq('is_active', true)
           .order('ticker'),
@@ -126,11 +125,6 @@ export default function ScreenerPage() {
       const q = query.toUpperCase()
       list = list.filter(
         (s) => s.ticker.includes(q) || s.name.toUpperCase().includes(q)
-      )
-    }
-    if (marketCapFilter !== 'ALL') {
-      list = list.filter(
-        (s) => marketCapBucket(s.quotes?.market_cap ?? null) === marketCapFilter
       )
     }
     if (volumeFilter !== 'ALL') {
