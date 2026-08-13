@@ -160,7 +160,7 @@ export default function Home() {
             .eq('is_active', true),
           supabase
             .from('signals')
-            .select('id, direction, confidence_score, timeframe, created_at, stocks ( ticker, name )')
+            .select('id, direction, timeframe, created_at, stocks ( ticker, name )')
             .eq('status', 'ACTIVE')
             .is('superseded_by', null)
             .order('created_at', { ascending: false })
