@@ -11,7 +11,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 // Kalau generate-signals diubah, file ini harus diubah bersamaan lalu
 // dijalankan ulang dengan formula_version baru.
 
-const FORMULA_VERSION = 'baseline_v5'
+const FORMULA_VERSION = 'baseline_v6'
 const ATR_PERIOD = 14
 const SUPPORT_RESISTANCE_LOOKBACK = 20
 const MAX_HOLD_BARS = 20 // batas "1 bulan" untuk D1 (~20 hari bursa); trade yang belum kena TP/SL dianggap timeout, bukan win/loss
@@ -299,15 +299,16 @@ Deno.serve(async (req: Request) => {
       const entry = candles[entryIdx].close
       const recent = candles.slice(Math.max(0, i - SUPPORT_RESISTANCE_LOOKBACK + 1), i + 1)
 
+      // SL/TP dilebarin (v6) -- WAJIB identik dengan generate-signals/index.ts
       let stopLoss: number, tp1: number
       if (direction === 'BUY') {
-        stopLoss = entry - 1.5 * atr
+        stopLoss = entry - 2 * atr
         const risk = entry - stopLoss
-        tp1 = entry + 1.5 * risk
+        tp1 = entry + 2 * risk
       } else {
-        stopLoss = entry + 1.5 * atr
+        stopLoss = entry + 2 * atr
         const risk = stopLoss - entry
-        tp1 = entry - 1.5 * risk
+        tp1 = entry - 2 * risk
       }
 
       const trade = simulateTrade(stock.ticker, direction, entryIdx, candles, entry, stopLoss, tp1, Math.abs(score))

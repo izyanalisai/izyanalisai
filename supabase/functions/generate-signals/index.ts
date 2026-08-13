@@ -195,20 +195,24 @@ Deno.serve(async (req: Request) => {
 
       let buyAreaLow: number, buyAreaHigh: number, stopLoss: number, tp1: number, tp2: number
 
+      // SL/TP dilebarin (v6): SL 1.5xATR & TP1 1.5R konsisten breakeven ~40%
+      // win rate di semua formula_version sebelumnya -- indikasi jarak SL/TP
+      // kekecilan dibanding noise harian saham IDX, kena stop out random
+      // sebelum tren "beneran" kebentuk.
       if (direction === 'BUY') {
         buyAreaLow = support
         buyAreaHigh = entry
-        stopLoss = entry - 1.5 * atr
+        stopLoss = entry - 2 * atr
         const risk = entry - stopLoss
-        tp1 = entry + 1.5 * risk
-        tp2 = entry + 3 * risk
+        tp1 = entry + 2 * risk
+        tp2 = entry + 4 * risk
       } else {
         buyAreaLow = entry
         buyAreaHigh = resistance
-        stopLoss = entry + 1.5 * atr
+        stopLoss = entry + 2 * atr
         const risk = stopLoss - entry
-        tp1 = entry - 1.5 * risk
-        tp2 = entry - 3 * risk
+        tp1 = entry - 2 * risk
+        tp2 = entry - 4 * risk
       }
 
       const confidence = Math.min(95, 50 + Math.abs(score) * 5)
@@ -237,7 +241,7 @@ Deno.serve(async (req: Request) => {
           status: 'ACTIVE',
           support_level: support,
           resistance_level: resistance,
-          formula_version: 'baseline_v5',
+          formula_version: 'baseline_v6',
           engine_version: 'v1',
           evidence: { score, ...evidence },
           triggered_at: new Date().toISOString(),
