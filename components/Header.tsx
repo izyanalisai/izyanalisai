@@ -2,13 +2,15 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import type { User } from '@supabase/supabase-js'
+import { NO_SHELL_PREFIXES } from './BottomNav'
 
 export default function Header() {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const router = useRouter()
+  const pathname = usePathname()
   const supabase = createClient()
 
   useEffect(() => {
@@ -30,6 +32,10 @@ export default function Header() {
     await supabase.auth.signOut()
     router.push('/login')
     router.refresh()
+  }
+
+  if (NO_SHELL_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) {
+    return null
   }
 
   return (

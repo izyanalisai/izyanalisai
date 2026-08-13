@@ -88,7 +88,16 @@ const NAV_ITEMS: NavItem[] = [
   },
 ]
 
+// Halaman yang TIDAK boleh nampilin app shell (Header + BottomNav):
+// semua alur pre-auth (landing, login, daftar, onboarding, agreement,
+// profil-risiko, lupa/reset password) + halaman dalam yang sudah full-screen.
+export const NO_SHELL_PREFIXES = [
+  '/landing', '/login', '/daftar', '/onboarding', '/agreement',
+  '/profil-risiko', '/lupa-password', '/reset-password', '/auth',
+]
+
 const HIDDEN_PREFIXES = [
+  ...NO_SHELL_PREFIXES,
   '/saham/', '/notifikasi', '/kalender', '/berita', '/riwayat-sinyal',
   '/trading-plan', '/chat', '/berlangganan',
 ]
