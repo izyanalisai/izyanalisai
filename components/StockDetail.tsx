@@ -12,6 +12,17 @@ type Stock = {
   sectors: { name: string } | null
 }
 
+type Quote = {
+  price: number | null
+  prev_close: number | null
+  change_percent: number | null
+  day_high: number | null
+  day_low: number | null
+  volume: number | null
+  quality: string | null
+  fetched_at: string | null
+}
+
 type Signal = {
   id: string
   direction: 'BUY' | 'SELL' | 'HOLD'
@@ -38,12 +49,19 @@ function formatHarga(n: number | null) {
   return new Intl.NumberFormat('id-ID').format(n)
 }
 
+function isStale(fetchedAt: string | null) {
+  if (!fetchedAt) return true
+  const diffMinutes = (Date.now() - new Date(fetchedAt).getTime()) / 60000
+  return diffMinutes > 30
+}
+
 export default function StockDetail({ ticker }: { ticker: string }) {
   const router = useRouter()
   const supabase = createClient()
 
   const [user, setUser] = useState<User | null>(null)
   const [stock, setStock] = useState<Stock | null>(null)
+  const [quote, setQuote] = useState<Quote | null>(null)
   const [signal, setSignal] = useState<Signal | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -74,6 +92,14 @@ export default function StockDetail({ ticker }: { ticker: string }) {
       }
 
       setStock(stockData as unknown as Stock)
+
+      const { data: quoteData } = await supabase
+        .from('quotes')
+        .select('price, prev_close, change_percent, day_high, day_low, volume, quality, fetched_at')
+        .eq('stock_id', stockData.id)
+        .maybeSingle()
+
+      if (active) setQuote(quoteData)
 
       const { data: signalData } = await supabase
         .from('signals')
@@ -200,9 +226,43 @@ export default function StockDetail({ ticker }: { ticker: string }) {
       </div>
 
       <div className="px-4 py-4 max-w-[480px] mx-auto space-y-4">
-        <div className="rounded-xl bg-white/5 border border-white/10 px-4 py-6 text-center">
-          <p className="text-slate-500 text-sm">Data harga menyusul</p>
-        </div>
+        {quote?.price != null ? (
+          <div className="rounded-xl bg-white/5 border border-white/10 px-4 py-5">
+            <div className="flex items-end justify-between">
+              <div>
+                <p className="text-2xl font-bold">{formatHarga(quote.price)}</p>
+                <p
+                  className={`text-sm font-medium mt-0.5 ${
+                    (quote.change_percent ?? 0) >= 0 ? 'text-[#22C55E]' : 'text-[#EF4444]'
+                  }`}
+                >
+                  {(quote.change_percent ?? 0) >= 0 ? '+' : ''}
+                  {quote.change_percent?.toFixed(2) ?? '0.00'}%
+                </p>
+              </div>
+              <div className="text-right text-xs text-slate-500 space-y-0.5">
+                <p>H: {formatHarga(quote.day_high)}</p>
+                <p>L: {formatHarga(quote.day_low)}</p>
+              </div>
+            </div>
+            {isStale(quote.fetched_at) && (
+              <p className="text-slate-600 text-[11px] mt-2">
+                Data tertunda — terakhir diperbarui{' '}
+                {quote.fetched_at
+                  ? new Date(quote.fetched_at).toLocaleTimeString('id-ID', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })
+                  : '-'}{' '}
+                WIB
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="rounded-xl bg-white/5 border border-white/10 px-4 py-6 text-center">
+            <p className="text-slate-500 text-sm">Data harga menyusul</p>
+          </div>
+        )}
 
         <div className="rounded-xl bg-white/5 border border-white/10 px-4 py-4">
           <div className="flex items-center justify-between mb-3">
