@@ -124,16 +124,21 @@ Deno.serve(async (req: Request) => {
     const batch = (stocks as StockRow[]).slice(i, i + CONCURRENCY)
     const results = await Promise.allSettled(
       batch.map(async (s) => {
-        const [{ data: candles, error: cErr }, { data: indRows, error: iErr }] = await Promise.all([
+        const [{ data: candlesDesc, error: cErr }, { data: indRows, error: iErr }] = await Promise.all([
+          // Ambil 60 candle TERBARU: order descending + limit, baru di-reverse jadi
+          // ascending. Sebelumnya order ascending + limit(60) malah mengambil 60
+          // candle TERLAMA sejak data pertama masuk, jadi sinyal tidak pernah
+          // memakai harga terkini begitu histori > 60 hari.
           supabase.from('candles').select('ts, open, high, low, close, volume')
             .eq('stock_id', s.id).eq('timeframe', timeframe)
-            .order('ts', { ascending: true }).limit(60),
+            .order('ts', { ascending: false }).limit(60),
           supabase.from('indicators').select('ema5, ema9, ema21, ema50, rsi14, macd_line, macd_signal, stoch_k, stoch_d, volume_avg20')
             .eq('stock_id', s.id).eq('timeframe', timeframe).maybeSingle(),
         ])
         if (cErr) throw cErr
         if (iErr) throw iErr
-        return { stock: s, candles: (candles ?? []) as CandleRow[], indicator: indRows as IndicatorRow | null }
+        const candles = ((candlesDesc ?? []) as CandleRow[]).slice().reverse()
+        return { stock: s, candles, indicator: indRows as IndicatorRow | null }
       }),
     )
 
