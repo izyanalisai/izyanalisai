@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
 
 export async function GET(request: Request) {
@@ -7,10 +7,40 @@ export async function GET(request: Request) {
   const next = searchParams.get('next') ?? '/'
 
   if (code) {
-    const supabase = await createClient()
+    // Buat response redirect DULU, lalu tulis cookie session langsung ke
+    // response ini juga (bukan cuma ke cookie store lewat next/headers).
+    // Sebelumnya cookie hanya ditulis via cookies().set() di server.ts,
+    // yang tidak otomatis ter-attach ke NextResponse.redirect() yang
+    // dikembalikan terpisah — jadi middleware di request berikutnya
+    // kadang belum melihat session dan melempar balik ke /landing
+    // (baru sukses setelah klik ulang / reload).
+    const redirectResponse = NextResponse.redirect(`${origin}${next}`)
+
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return Array.from(
+              request.headers.get('cookie')?.split('; ').filter(Boolean).map((c) => {
+                const idx = c.indexOf('=')
+                return { name: c.slice(0, idx), value: c.slice(idx + 1) }
+              }) ?? []
+            )
+          },
+          setAll(cookiesToSet) {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              redirectResponse.cookies.set(name, value, options)
+            )
+          },
+        },
+      }
+    )
+
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     if (!error) {
-      return NextResponse.redirect(`${origin}${next}`)
+      return redirectResponse
     }
   }
 
