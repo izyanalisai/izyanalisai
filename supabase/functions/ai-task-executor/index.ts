@@ -109,7 +109,7 @@ Deno.serve(async (_req: Request) => {
         const lastRunDay = t.last_run ? todayWIB(new Date(t.last_run)) : null
         if (lastRunDay === today) continue // sudah kirim hari ini
 
-        const { data: idx } = await supabase.from('market_index').select('*').eq('ticker', 'IHSG').maybeSingle()
+        const { data: idx } = await supabase.from('market_index').select('*').eq('ticker', '^JKSE').maybeSingle()
         const changeTxt = idx?.previous_close && idx?.value != null
           ? `${(Number(idx.value) - Number(idx.previous_close)) >= 0 ? '+' : ''}${(Number(idx.value) - Number(idx.previous_close)).toFixed(2)} poin`
           : 'data belum tersedia'
