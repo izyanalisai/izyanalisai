@@ -272,7 +272,7 @@ Deno.serve(async (req: Request) => {
     // Mulai dari bar ke-60 (butuh histori cukup untuk EMA50/MACD/ATR), sisakan
     // ruang di akhir untuk MAX_HOLD_BARS supaya outcome trade bisa diukur.
     const startIdx = 60
-    const endIdx = candles.length - 2 // minimal 1 bar ke depan untuk entry di bar berikutnya
+    const endIdx = candles.length - 1 // minimal 1 bar ke depan untuk evaluasi TP/SL
 
     for (let i = startIdx; i < endIdx; i++) {
       const ind: IndicatorPoint = {
@@ -293,11 +293,12 @@ Deno.serve(async (req: Request) => {
       const atr = computeATR(atrWindow)
       if (atr == null) continue
 
-      // Entry disimulasikan di OPEN bar berikutnya (bukan close bar sinyal),
-      // supaya backtest tidak "melihat masa depan" -- konsisten dengan cara
-      // signal beneran akan dipakai user (baca sinyal, baru entry besoknya).
-      const entryIdx = i + 1
-      const entry = candles[entryIdx].open
+      // Entry = close bar sinyal itu sendiri, PERSIS seperti generate-signals/index.ts
+      // (entry: lastCandle.close). Wajib identik dengan produksi -- kalau backtest
+      // menguji formula entry yang beda (mis. open bar besok), hasil Win Rate/Profit
+      // Factor tidak lagi memvalidasi strategi yang benar-benar jalan di produksi.
+      const entryIdx = i
+      const entry = candles[entryIdx].close
       const recent = candles.slice(Math.max(0, i - SUPPORT_RESISTANCE_LOOKBACK + 1), i + 1)
 
       let stopLoss: number, tp1: number
