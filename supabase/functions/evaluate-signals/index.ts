@@ -74,13 +74,23 @@ Deno.serve(async (_req: Request) => {
     }
   }
 
+  const CHUNK_SIZE = 200
   const transitions: Record<string, number> = {}
   for (const [status, ids] of updatesByStatus) {
-    const { error: updErr } = await supabase
-      .from('signals')
-      .update({ status, triggered_at: now.toISOString() })
-      .in('id', ids)
-    transitions[status] = updErr ? 0 : ids.length
+    let okCount = 0
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + CHUNK_SIZE)
+      try {
+        const { error: updErr } = await supabase
+          .from('signals')
+          .update({ status, triggered_at: now.toISOString() })
+          .in('id', chunk)
+        if (!updErr) okCount += chunk.length
+      } catch (_e) {
+        // chunk gagal, skip - tidak mempengaruhi chunk lain
+      }
+    }
+    transitions[status] = okCount
   }
 
   return new Response(
