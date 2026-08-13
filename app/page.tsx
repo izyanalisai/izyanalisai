@@ -22,6 +22,7 @@ type SignalRow = {
   confidence_score: number | null
   timeframe: string | null
   created_at: string
+  stock_id: string
   stocks: { ticker: string; name: string } | null
 }
 
@@ -159,8 +160,8 @@ export default function Home() {
             .select('id, ticker, name, quotes ( price, previous_close, volume )')
             .eq('is_active', true),
           supabase
-            .from('signals')
-            .select('id, direction, timeframe, created_at, stocks ( ticker, name )')
+            .from('signals_public')
+            .select('id, direction, timeframe, created_at, stock_id')
             .eq('status', 'ACTIVE')
             .is('superseded_by', null)
             .order('created_at', { ascending: false })
@@ -174,10 +175,19 @@ export default function Home() {
           supabase.from('news').select('id, title, sentiment, published_at').order('published_at', { ascending: false }).limit(3),
         ])
 
+      const stockList = (stockData as unknown as StockRow[]) ?? []
+      const stockById = new Map(stockList.map((s) => [s.id, s]))
+      const enrichedSignals = ((signalData as unknown as SignalRow[]) ?? []).map((s) => ({
+        ...s,
+        stocks: stockById.has(s.stock_id)
+          ? { ticker: stockById.get(s.stock_id)!.ticker, name: stockById.get(s.stock_id)!.name }
+          : null,
+      }))
+
       setIhsg(idx ?? null)
       setForeignFlow(flow ?? null)
-      setStocks((stockData as unknown as StockRow[]) ?? [])
-      setSignals((signalData as unknown as SignalRow[]) ?? [])
+      setStocks(stockList)
+      setSignals(enrichedSignals)
       setEconEvents(econData ?? [])
       setNews(newsData ?? [])
       setLoading(false)
