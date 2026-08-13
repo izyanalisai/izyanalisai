@@ -3,8 +3,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 // Backfill satu kali: ambil sector/industry per saham dari Yahoo Finance
 // pakai endpoint search (tidak butuh crumb, beda dari quoteSummary yang sering diblokir).
 const YAHOO_SEARCH_BASE = 'https://query2.finance.yahoo.com/v1/finance/search'
-const CONCURRENCY = 8
-const BATCH_DELAY_MS = 500
+const CONCURRENCY = 15
+const BATCH_DELAY_MS = 250
 
 type StockRow = { id: string; ticker: string }
 
@@ -25,16 +25,24 @@ async function fetchSector(ticker: string): Promise<{ sector: string | null; deb
   return { sector }
 }
 
-Deno.serve(async (_req: Request) => {
+Deno.serve(async (req: Request) => {
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   )
 
+  // Supabase edge function idle timeout ~150s, jadi 951 saham diproses per-batch
+  // pakai query param ?offset=&limit= supaya tiap call selesai jauh di bawah itu.
+  const url = new URL(req.url)
+  const offset = Number(url.searchParams.get('offset') ?? '0')
+  const limit = Number(url.searchParams.get('limit') ?? '150')
+
   const { data: stocks, error } = await supabase
     .from('stocks')
     .select('id, ticker')
     .eq('is_active', true)
+    .order('ticker')
+    .range(offset, offset + limit - 1)
 
   if (error || !stocks) {
     return new Response(
@@ -109,6 +117,8 @@ Deno.serve(async (_req: Request) => {
 
   return new Response(
     JSON.stringify({
+      offset,
+      limit,
       total: stocks.length,
       ok: totalOk,
       no_sector: totalNoSector,
