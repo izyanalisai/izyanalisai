@@ -35,7 +35,6 @@ Deno.serve(async (_req: Request) => {
     .from('stocks')
     .select('id, ticker')
     .eq('is_active', true)
-    .limit(20) // DEBUG MODE: cuma 20 saham dulu buat cek endpointnya jalan atau nggak
 
   if (error || !stocks) {
     return new Response(
