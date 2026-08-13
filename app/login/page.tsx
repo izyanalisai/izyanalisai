@@ -1,6 +1,7 @@
 'use client'
 
 import { createClient } from '@/lib/supabase/client'
+import { getPostLoginPath } from '@/lib/auth-flow'
 import { useState } from 'react'
 
 export default function LoginPage() {
@@ -15,17 +16,14 @@ export default function LoginPage() {
     setError(null)
     setLoading(true)
     const supabase = createClient()
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) {
-      setError(error.message)
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error || !data.user) {
+      setError(error?.message ?? 'Login gagal.')
       setLoading(false)
-    } else {
-      // Pakai hard navigation (bukan router.push) supaya request berikutnya
-      // benar-benar request baru ke server — middleware jadi baca cookie
-      // session yang sudah pasti fresh, bukan state client lama yang
-      // kadang belum sinkron (penyebab kadang harus klik 2x).
-      window.location.href = '/'
+      return
     }
+    const path = await getPostLoginPath(supabase, data.user.id)
+    window.location.href = path
   }
 
   const handleGoogleLogin = async () => {
@@ -34,9 +32,7 @@ export default function LoginPage() {
     const supabase = createClient()
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-      },
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
     })
     if (error) {
       setError(error.message)
@@ -48,10 +44,7 @@ export default function LoginPage() {
     <main className="min-h-screen bg-[#0F172A] text-white px-4 py-10 max-w-[480px] mx-auto flex flex-col justify-center">
       <h1
         className="text-3xl font-bold bg-clip-text text-transparent mb-8 text-center"
-        style={{
-          backgroundImage:
-            'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)',
-        }}
+        style={{ backgroundImage: 'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)' }}
       >
         Masuk
       </h1>
@@ -74,16 +67,19 @@ export default function LoginPage() {
           required
         />
 
+        <div className="text-right -mt-2">
+          <a href="/lupa-password" className="text-xs text-slate-400 hover:text-[#3B82F6]">
+            Lupa password?
+          </a>
+        </div>
+
         {error && <p className="text-[#EF4444] text-sm">{error}</p>}
 
         <button
           type="submit"
           disabled={loading}
           className="w-full rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
-          style={{
-            backgroundImage:
-              'linear-gradient(135deg, #3B82F6 0%, #8B5CF6 50%, #EC4899 100%)',
-          }}
+          style={{ backgroundImage: 'linear-gradient(135deg, #3B82F6 0%, #8B5CF6 50%, #EC4899 100%)' }}
         >
           {loading ? 'Memproses...' : 'Masuk'}
         </button>
@@ -107,9 +103,7 @@ export default function LoginPage() {
 
       <p className="mt-5 text-center text-sm text-slate-400">
         Belum punya akun?{' '}
-        <a href="/daftar" className="text-[#3B82F6] font-medium">
-          Daftar
-        </a>
+        <a href="/daftar" className="text-[#3B82F6] font-medium">Daftar</a>
       </p>
     </main>
   )

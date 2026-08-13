@@ -1,20 +1,13 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
+import { getPostLoginPath } from '@/lib/auth-flow'
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
-  const next = searchParams.get('next') ?? '/'
 
   if (code) {
-    // Buat response redirect DULU, lalu tulis cookie session langsung ke
-    // response ini juga (bukan cuma ke cookie store lewat next/headers).
-    // Sebelumnya cookie hanya ditulis via cookies().set() di server.ts,
-    // yang tidak otomatis ter-attach ke NextResponse.redirect() yang
-    // dikembalikan terpisah — jadi middleware di request berikutnya
-    // kadang belum melihat session dan melempar balik ke /landing
-    // (baru sukses setelah klik ulang / reload).
-    const redirectResponse = NextResponse.redirect(`${origin}${next}`)
+    let redirectResponse = NextResponse.redirect(`${origin}/`)
 
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -38,8 +31,10 @@ export async function GET(request: Request) {
       }
     )
 
-    const { error } = await supabase.auth.exchangeCodeForSession(code)
-    if (!error) {
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code)
+    if (!error && data.user) {
+      const path = await getPostLoginPath(supabase, data.user.id)
+      redirectResponse = NextResponse.redirect(`${origin}${path}`)
       return redirectResponse
     }
   }

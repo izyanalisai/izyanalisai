@@ -1,6 +1,7 @@
 'use client'
 
 import { createClient } from '@/lib/supabase/client'
+import { getPostLoginPath } from '@/lib/auth-flow'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 
@@ -28,6 +29,12 @@ export default function Home() {
 
   useEffect(() => {
     const supabase = createClient()
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (user) {
+        const path = await getPostLoginPath(supabase, user.id)
+        if (path !== '/') window.location.href = path
+      }
+    })
     supabase
       .from('stocks')
       .select('id, ticker, name, quotes ( price, previous_close )')
