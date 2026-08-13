@@ -203,7 +203,7 @@ export default function ProfilPage() {
 
         <div className="mt-5 rounded-xl bg-white/5 border border-white/10 divide-y divide-white/5 overflow-hidden">
           <MenuLink label="Notifikasi" href="/notifikasi" />
-          <MenuLink label="Riwayat Sinyal" />
+          <MenuLink label="Riwayat Sinyal" href="/riwayat-sinyal" />
           <MenuLink label="Trading Plan" href="/trading-plan" />
           <a
             href="https://wa.me/6285178268451"
