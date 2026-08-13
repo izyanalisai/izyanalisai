@@ -7,7 +7,12 @@ export async function GET(request: Request) {
   const code = searchParams.get('code')
 
   if (code) {
-    let redirectResponse = NextResponse.redirect(`${origin}/`)
+    // Kumpulin cookie sesi dulu di sini, JANGAN langsung ditempel ke response
+    // sementara — soalnya response finalnya baru dibikin setelah kita tau
+    // tujuan redirect-nya (getPostLoginPath). Kalau ditempel ke response
+    // sementara lalu response-nya diganti objek baru, cookie ikut hilang
+    // (ini bug lama yang bikin login Google keliatan gagal terus).
+    const cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[] = []
 
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -22,20 +27,22 @@ export async function GET(request: Request) {
               }) ?? []
             )
           },
-          setAll(cookiesToSet) {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              redirectResponse.cookies.set(name, value, options)
-            )
+          setAll(list) {
+            cookiesToSet.push(...list)
           },
         },
       }
     )
 
     const { data, error } = await supabase.auth.exchangeCodeForSession(code)
+
     if (!error && data.user) {
       const path = await getPostLoginPath(supabase, data.user.id)
-      redirectResponse = NextResponse.redirect(`${origin}${path}`)
-      return redirectResponse
+      const response = NextResponse.redirect(`${origin}${path}`)
+      cookiesToSet.forEach(({ name, value, options }) =>
+        response.cookies.set(name, value, options as Parameters<typeof response.cookies.set>[2])
+      )
+      return response
     }
   }
 
