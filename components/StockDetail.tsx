@@ -1,7 +1,7 @@
 'use client'
 
 import { createClient } from '@/lib/supabase/client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import type { User } from '@supabase/supabase-js'
 
@@ -22,19 +22,25 @@ type Quote = {
   updated_at: string | null
 }
 
-type Signal = {
+type SignalRpcResult = {
   id: string
   direction: 'BUY' | 'SELL' | 'HOLD'
-  entry_price: number | null
-  buy_area_low: number | null
-  buy_area_high: number | null
-  tp1: number | null
-  tp2: number | null
-  stop_loss: number | null
-  confidence_score: number | null
   status: string
-  ai_reasoning: { teknikal?: string; fundamental?: string; makro?: string } | null
   created_at: string
+  unlocked: boolean
+  entry_price?: number | null
+  buy_area_low?: number | null
+  buy_area_high?: number | null
+  tp1?: number | null
+  tp2?: number | null
+  stop_loss?: number | null
+  confidence_score?: number | null
+  ai_reasoning?: { teknikal?: string; fundamental?: string; makro?: string } | null
+}
+
+type Wallet = {
+  balance: number
+  ad_unlock_count: number
 }
 
 const directionStyle: Record<string, { bg: string; text: string; label: string }> = {
@@ -43,7 +49,7 @@ const directionStyle: Record<string, { bg: string; text: string; label: string }
   HOLD: { bg: 'bg-white/10', text: 'text-slate-300', label: 'HOLD' },
 }
 
-function formatHarga(n: number | null) {
+function formatHarga(n: number | null | undefined) {
   if (n === null || n === undefined) return '-'
   return new Intl.NumberFormat('id-ID').format(n)
 }
@@ -59,6 +65,16 @@ function isStale(fetchedAt: string | null) {
   return diffMinutes > 30
 }
 
+// Field yang diblur kalau sinyal masih terkunci.
+function LockedField({ label }: { label: string }) {
+  return (
+    <div className="rounded-lg bg-white/5 px-3 py-2">
+      <p className="text-slate-500 text-xs">{label}</p>
+      <p className="font-medium select-none blur-sm">••••••</p>
+    </div>
+  )
+}
+
 export default function StockDetail({ ticker }: { ticker: string }) {
   const router = useRouter()
   const supabase = createClient()
@@ -66,13 +82,27 @@ export default function StockDetail({ ticker }: { ticker: string }) {
   const [user, setUser] = useState<User | null>(null)
   const [stock, setStock] = useState<Stock | null>(null)
   const [quote, setQuote] = useState<Quote | null>(null)
-  const [signal, setSignal] = useState<Signal | null>(null)
+  const [signal, setSignal] = useState<SignalRpcResult | null>(null)
+  const [wallet, setWallet] = useState<Wallet | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
 
   const [inWatchlist, setInWatchlist] = useState(false)
   const [watchlistLoading, setWatchlistLoading] = useState(false)
   const [watchlistMsg, setWatchlistMsg] = useState<string | null>(null)
+
+  const [unlockLoading, setUnlockLoading] = useState(false)
+  const [unlockMsg, setUnlockMsg] = useState<string | null>(null)
+
+  const loadSignal = useCallback(async (stockId: string) => {
+    const { data, error } = await supabase.rpc('get_signal_for_stock', { p_stock_id: stockId })
+    if (!error) setSignal(data as SignalRpcResult | null)
+  }, [supabase])
+
+  const loadWallet = useCallback(async () => {
+    const { data, error } = await supabase.rpc('get_my_wallet')
+    if (!error && data) setWallet(data as Wallet)
+  }, [supabase])
 
   useEffect(() => {
     let active = true
@@ -105,21 +135,11 @@ export default function StockDetail({ ticker }: { ticker: string }) {
 
       if (active) setQuote(quoteData)
 
-      const { data: signalData } = await supabase
-        .from('signals')
-        .select(
-          'id, direction, entry_price, buy_area_low, buy_area_high, tp1, tp2, stop_loss, confidence_score, status, ai_reasoning, created_at'
-        )
-        .eq('stock_id', stockData.id)
-        .eq('status', 'ACTIVE')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-      if (!active) return
-      setSignal(signalData as Signal | null)
+      await loadSignal(stockData.id)
 
       if (userData.user) {
+        await loadWallet()
+
         const { data: watchlists } = await supabase
           .from('watchlists')
           .select('id')
@@ -145,6 +165,72 @@ export default function StockDetail({ ticker }: { ticker: string }) {
       active = false
     }
   }, [ticker])
+
+  const handleUnlockToken = async () => {
+    if (!user) {
+      router.push('/login')
+      return
+    }
+    if (!stock) return
+
+    setUnlockLoading(true)
+    setUnlockMsg(null)
+
+    const idempotencyKey = crypto.randomUUID()
+    const { data, error } = await supabase.rpc('unlock_signal_with_token', {
+      p_stock_id: stock.id,
+      p_idempotency_key: idempotencyKey,
+    })
+
+    if (error) {
+      if (error.message.includes('INSUFFICIENT_TOKENS')) {
+        setUnlockMsg('Token habis. Tonton iklan atau upgrade Premium.')
+      } else {
+        setUnlockMsg('Gagal membuka sinyal. Coba lagi.')
+      }
+      setUnlockLoading(false)
+      return
+    }
+
+    void data
+    await loadSignal(stock.id)
+    await loadWallet()
+    setUnlockLoading(false)
+  }
+
+  // PENTING: tombol ini baru boleh dipanggil SETELAH iklan rewarded AdMob
+  // benar-benar selesai ditonton (callback onUserEarnedReward dari SDK).
+  // Untuk sekarang RPC dipanggil langsung karena integrasi AdMob (16.2)
+  // belum terpasang — jangan ship ke production sebelum AdMob nyantol
+  // di sini, kalau tidak user bisa unlock gratis tanpa nonton iklan.
+  const handleUnlockAd = async () => {
+    if (!user) {
+      router.push('/login')
+      return
+    }
+    if (!stock) return
+
+    setUnlockLoading(true)
+    setUnlockMsg(null)
+
+    const { error } = await supabase.rpc('unlock_signal_with_ad', { p_stock_id: stock.id })
+
+    if (error) {
+      if (error.message.includes('AD_LIMIT_REACHED')) {
+        setUnlockMsg('Sudah 3x nonton iklan hari ini. Pakai token atau upgrade Premium.')
+      } else if (error.message.includes('PREMIUM_NO_ADS_NEEDED')) {
+        setUnlockMsg('Akun Premium tidak perlu nonton iklan.')
+      } else {
+        setUnlockMsg('Gagal membuka sinyal lewat iklan. Coba lagi.')
+      }
+      setUnlockLoading(false)
+      return
+    }
+
+    await loadSignal(stock.id)
+    await loadWallet()
+    setUnlockLoading(false)
+  }
 
   const handleWatchlist = async () => {
     if (!user) {
@@ -224,6 +310,7 @@ export default function StockDetail({ ticker }: { ticker: string }) {
   }
 
   const dir = signal ? directionStyle[signal.direction] : null
+  const locked = signal && !signal.unlocked
 
   return (
     <main className="min-h-screen bg-[#0F172A] text-white pb-28">
@@ -298,34 +385,51 @@ export default function StockDetail({ ticker }: { ticker: string }) {
           {signal && (
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-2 text-sm">
-                <div className="rounded-lg bg-white/5 px-3 py-2">
-                  <p className="text-slate-500 text-xs">Buy Area</p>
+                {locked ? (
+                  <>
+                    <LockedField label="Buy Area" />
+                    <LockedField label="Stop Loss" />
+                    <LockedField label="Target 1 (TP1)" />
+                    <LockedField label="Target 2 (TP2)" />
+                  </>
+                ) : (
+                  <>
+                    <div className="rounded-lg bg-white/5 px-3 py-2">
+                      <p className="text-slate-500 text-xs">Buy Area</p>
+                      <p className="font-medium">
+                        {formatHarga(signal.buy_area_low)} - {formatHarga(signal.buy_area_high)}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-white/5 px-3 py-2">
+                      <p className="text-slate-500 text-xs">Stop Loss</p>
+                      <p className="font-medium text-[#EF4444]">{formatHarga(signal.stop_loss)}</p>
+                    </div>
+                    <div className="rounded-lg bg-white/5 px-3 py-2">
+                      <p className="text-slate-500 text-xs">Target 1 (TP1)</p>
+                      <p className="font-medium text-[#22C55E]">{formatHarga(signal.tp1)}</p>
+                    </div>
+                    <div className="rounded-lg bg-white/5 px-3 py-2">
+                      <p className="text-slate-500 text-xs">Target 2 (TP2)</p>
+                      <p className="font-medium text-[#22C55E]">{formatHarga(signal.tp2)}</p>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {locked ? (
+                <LockedField label="Confidence" />
+              ) : (
+                <div className="rounded-lg bg-white/5 px-3 py-2 text-sm">
+                  <p className="text-slate-500 text-xs">Confidence</p>
                   <p className="font-medium">
-                    {formatHarga(signal.buy_area_low)} - {formatHarga(signal.buy_area_high)}
+                    {signal.confidence_score !== null && signal.confidence_score !== undefined
+                      ? `${signal.confidence_score}%`
+                      : 'Data belum cukup'}
                   </p>
                 </div>
-                <div className="rounded-lg bg-white/5 px-3 py-2">
-                  <p className="text-slate-500 text-xs">Stop Loss</p>
-                  <p className="font-medium text-[#EF4444]">{formatHarga(signal.stop_loss)}</p>
-                </div>
-                <div className="rounded-lg bg-white/5 px-3 py-2">
-                  <p className="text-slate-500 text-xs">Target 1 (TP1)</p>
-                  <p className="font-medium text-[#22C55E]">{formatHarga(signal.tp1)}</p>
-                </div>
-                <div className="rounded-lg bg-white/5 px-3 py-2">
-                  <p className="text-slate-500 text-xs">Target 2 (TP2)</p>
-                  <p className="font-medium text-[#22C55E]">{formatHarga(signal.tp2)}</p>
-                </div>
-              </div>
+              )}
 
-              <div className="rounded-lg bg-white/5 px-3 py-2 text-sm">
-                <p className="text-slate-500 text-xs">Confidence</p>
-                <p className="font-medium">
-                  {signal.confidence_score !== null ? `${signal.confidence_score}%` : 'Data belum cukup'}
-                </p>
-              </div>
-
-              {signal.ai_reasoning && (
+              {!locked && signal.ai_reasoning && (
                 <div className="space-y-2 text-sm">
                   {signal.ai_reasoning.teknikal && (
                     <div>
@@ -345,6 +449,35 @@ export default function StockDetail({ ticker }: { ticker: string }) {
                       <p className="text-slate-300">{signal.ai_reasoning.makro}</p>
                     </div>
                   )}
+                </div>
+              )}
+
+              {locked && (
+                <div className="space-y-2 pt-1">
+                  {user && wallet && (
+                    <p className="text-slate-500 text-[11px]">
+                      Sisa token hari ini: {wallet.balance} · Iklan tersisa: {Math.max(0, 3 - wallet.ad_unlock_count)}x
+                    </p>
+                  )}
+                  <button
+                    onClick={handleUnlockToken}
+                    disabled={unlockLoading}
+                    className="w-full rounded-xl py-2.5 text-sm font-medium text-white disabled:opacity-60"
+                    style={{
+                      backgroundImage:
+                        'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)',
+                    }}
+                  >
+                    {unlockLoading ? 'Memproses...' : 'Lihat Penjelasan Lengkap (1 Token)'}
+                  </button>
+                  <button
+                    onClick={handleUnlockAd}
+                    disabled={unlockLoading}
+                    className="w-full rounded-xl py-2.5 text-sm font-medium border border-white/10 text-slate-300 disabled:opacity-60"
+                  >
+                    Tonton Iklan untuk Buka
+                  </button>
+                  {unlockMsg && <p className="text-[#EF4444] text-xs text-center">{unlockMsg}</p>}
                 </div>
               )}
 
