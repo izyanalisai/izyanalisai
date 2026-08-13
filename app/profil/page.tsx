@@ -167,7 +167,7 @@ export default function ProfilPage() {
         </div>
 
         <button
-          onClick={() => alert('Halaman Berlangganan segera hadir.')}
+          onClick={() => router.push('/berlangganan')}
           className="w-full mt-5 rounded-xl border border-white/10 px-4 py-3 flex items-center justify-between"
           style={
             profile?.is_premium
