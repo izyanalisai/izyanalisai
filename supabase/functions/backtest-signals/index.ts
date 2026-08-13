@@ -11,7 +11,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 // Kalau generate-signals diubah, file ini harus diubah bersamaan lalu
 // dijalankan ulang dengan formula_version baru.
 
-const FORMULA_VERSION = 'baseline_v3'
+const FORMULA_VERSION = 'baseline_v4'
 const ATR_PERIOD = 14
 const SUPPORT_RESISTANCE_LOOKBACK = 20
 const MAX_HOLD_BARS = 20 // batas "1 bulan" untuk D1 (~20 hari bursa); trade yang belum kena TP/SL dianggap timeout, bukan win/loss
@@ -128,19 +128,19 @@ function scoreSignal(ind: IndicatorPoint, lastCandle: CandleRow, prevClose: numb
   }
 
   if (ind.rsi14 != null) {
-    if (ind.rsi14 > 55) score += 2
-    else if (ind.rsi14 < 45) score -= 2
+    // Bobot dinaikkan (v4): diagnostik per-indikator PF 1.15, paling kuat di BUY-side
+    if (ind.rsi14 > 55) score += 3
+    else if (ind.rsi14 < 45) score -= 3
   }
 
   if (ind.macd_line != null && ind.macd_signal != null) {
-    if (ind.macd_line > ind.macd_signal) score += 2
-    else score -= 2
+    // Bobot dinaikkan (v4): diagnostik per-indikator PF 1.07
+    if (ind.macd_line > ind.macd_signal) score += 3
+    else score -= 3
   }
 
-  if (ind.stoch_k != null && ind.stoch_d != null) {
-    if (ind.stoch_k > ind.stoch_d && ind.stoch_k < 80) score += 1
-    else if (ind.stoch_k < ind.stoch_d && ind.stoch_k > 20) score -= 1
-  }
+  // Stochastic dihapus dari skor (v4): diagnostik menunjukkan PF ~1.0,
+  // nyaris tidak menyumbang edge, cuma nambah noise ke skor gabungan.
 
   const priceUp = lastCandle.close > prevClose
   if (ind.volume_avg20 != null && lastCandle.volume != null) {
@@ -153,8 +153,9 @@ function scoreSignal(ind: IndicatorPoint, lastCandle: CandleRow, prevClose: numb
   const body = Math.abs(lastCandle.close - lastCandle.open)
   const range = lastCandle.high - lastCandle.low
   if (range > 0 && body / range > 0.6) {
-    if (lastCandle.close > lastCandle.open) score += 2
-    else score -= 2
+    // Bobot diturunkan (v4): diagnostik PF ~1.0, kontribusi lemah
+    if (lastCandle.close > lastCandle.open) score += 1
+    else score -= 1
   }
 
   return score

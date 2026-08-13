@@ -38,21 +38,20 @@ function scoreSignal(ind: IndicatorRow, lastCandle: CandleRow, prevClose: number
   }
 
   if (ind.rsi14 != null) {
-    if (ind.rsi14 > 55) { score += 2; evidence.rsi = `bullish (${ind.rsi14.toFixed(1)})` }
-    else if (ind.rsi14 < 45) { score -= 2; evidence.rsi = `bearish (${ind.rsi14.toFixed(1)})` }
+    // Bobot dinaikkan (v4): diagnostik per-indikator PF 1.15, paling kuat di BUY-side
+    if (ind.rsi14 > 55) { score += 3; evidence.rsi = `bullish (${ind.rsi14.toFixed(1)})` }
+    else if (ind.rsi14 < 45) { score -= 3; evidence.rsi = `bearish (${ind.rsi14.toFixed(1)})` }
     else evidence.rsi = `neutral (${ind.rsi14.toFixed(1)})`
   }
 
   if (ind.macd_line != null && ind.macd_signal != null) {
-    if (ind.macd_line > ind.macd_signal) { score += 2; evidence.macd = 'bullish crossover' }
-    else { score -= 2; evidence.macd = 'bearish crossover' }
+    // Bobot dinaikkan (v4): diagnostik per-indikator PF 1.07
+    if (ind.macd_line > ind.macd_signal) { score += 3; evidence.macd = 'bullish crossover' }
+    else { score -= 3; evidence.macd = 'bearish crossover' }
   }
 
-  if (ind.stoch_k != null && ind.stoch_d != null) {
-    if (ind.stoch_k > ind.stoch_d && ind.stoch_k < 80) { score += 1; evidence.stochastic = 'bullish' }
-    else if (ind.stoch_k < ind.stoch_d && ind.stoch_k > 20) { score -= 1; evidence.stochastic = 'bearish' }
-    else evidence.stochastic = 'neutral/extreme'
-  }
+  // Stochastic dihapus dari skor (v4): diagnostik menunjukkan PF ~1.0,
+  // nyaris tidak menyumbang edge, cuma nambah noise ke skor gabungan.
 
   const priceUp = lastCandle.close > prevClose
   if (ind.volume_avg20 != null && lastCandle.volume != null) {
@@ -65,8 +64,9 @@ function scoreSignal(ind: IndicatorRow, lastCandle: CandleRow, prevClose: number
   const body = Math.abs(lastCandle.close - lastCandle.open)
   const range = lastCandle.high - lastCandle.low
   if (range > 0 && body / range > 0.6) {
-    if (lastCandle.close > lastCandle.open) { score += 2; evidence.candlestick = 'strong bullish candle' }
-    else { score -= 2; evidence.candlestick = 'strong bearish candle' }
+    // Bobot diturunkan (v4): diagnostik PF ~1.0, kontribusi lemah
+    if (lastCandle.close > lastCandle.open) { score += 1; evidence.candlestick = 'strong bullish candle' }
+    else { score -= 1; evidence.candlestick = 'strong bearish candle' }
   } else evidence.candlestick = 'indecisive candle'
 
   return { score, evidence }
@@ -234,7 +234,7 @@ Deno.serve(async (req: Request) => {
           status: 'ACTIVE',
           support_level: support,
           resistance_level: resistance,
-          formula_version: 'baseline_v3',
+          formula_version: 'baseline_v4',
           engine_version: 'v1',
           evidence: { score, ...evidence },
           triggered_at: new Date().toISOString(),
