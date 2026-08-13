@@ -14,13 +14,12 @@ type Stock = {
 
 type Quote = {
   price: number | null
-  prev_close: number | null
-  change_percent: number | null
+  previous_close: number | null
   day_high: number | null
   day_low: number | null
   volume: number | null
   quality: string | null
-  fetched_at: string | null
+  updated_at: string | null
 }
 
 type Signal = {
@@ -47,6 +46,11 @@ const directionStyle: Record<string, { bg: string; text: string; label: string }
 function formatHarga(n: number | null) {
   if (n === null || n === undefined) return '-'
   return new Intl.NumberFormat('id-ID').format(n)
+}
+
+function pctChange(price: number | null, prev: number | null) {
+  if (price === null || prev === null || prev === 0) return null
+  return ((price - prev) / prev) * 100
 }
 
 function isStale(fetchedAt: string | null) {
@@ -95,7 +99,7 @@ export default function StockDetail({ ticker }: { ticker: string }) {
 
       const { data: quoteData } = await supabase
         .from('quotes')
-        .select('price, prev_close, change_percent, day_high, day_low, volume, quality, fetched_at')
+        .select('price, previous_close, day_high, day_low, volume, quality, updated_at')
         .eq('stock_id', stockData.id)
         .maybeSingle()
 
@@ -246,11 +250,11 @@ export default function StockDetail({ ticker }: { ticker: string }) {
                 <p className="text-2xl font-bold">{formatHarga(quote.price)}</p>
                 <p
                   className={`text-sm font-medium mt-0.5 ${
-                    (quote.change_percent ?? 0) >= 0 ? 'text-[#22C55E]' : 'text-[#EF4444]'
+                    (pctChange(quote.price, quote.previous_close) ?? 0) >= 0 ? 'text-[#22C55E]' : 'text-[#EF4444]'
                   }`}
                 >
-                  {(quote.change_percent ?? 0) >= 0 ? '+' : ''}
-                  {quote.change_percent?.toFixed(2) ?? '0.00'}%
+                  {(pctChange(quote.price, quote.previous_close) ?? 0) >= 0 ? '+' : ''}
+                  {pctChange(quote.price, quote.previous_close)?.toFixed(2) ?? '0.00'}%
                 </p>
               </div>
               <div className="text-right text-xs text-slate-500 space-y-0.5">
@@ -258,11 +262,11 @@ export default function StockDetail({ ticker }: { ticker: string }) {
                 <p>L: {formatHarga(quote.day_low)}</p>
               </div>
             </div>
-            {isStale(quote.fetched_at) && (
+            {isStale(quote.updated_at) && (
               <p className="text-slate-600 text-[11px] mt-2">
                 Data tertunda — terakhir diperbarui{' '}
-                {quote.fetched_at
-                  ? new Date(quote.fetched_at).toLocaleTimeString('id-ID', {
+                {quote.updated_at
+                  ? new Date(quote.updated_at).toLocaleTimeString('id-ID', {
                       hour: '2-digit',
                       minute: '2-digit',
                     })
