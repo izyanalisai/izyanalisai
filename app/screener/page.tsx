@@ -11,8 +11,17 @@ type Stock = {
   name: string
   sector_id: string | null
   sectors: { name: string } | null
-  quotes: { price: number | null; previous_close: number | null } | null
+  quotes: {
+    price: number | null
+    previous_close: number | null
+    volume: number | null
+    market_cap: number | null
+  } | null
 }
+
+type MarketCapFilter = 'ALL' | 'SMALL' | 'MID' | 'BIG'
+type VolumeFilter = 'ALL' | 'RENDAH' | 'SEDANG' | 'TINGGI'
+type ViewMode = 'HEATMAP' | 'LIST'
 
 function formatHarga(n: number | null) {
   if (n === null || n === undefined) return '-'
@@ -24,6 +33,33 @@ function pctChange(price: number | null, prev: number | null) {
   return ((price - prev) / prev) * 100
 }
 
+// Threshold sesuai spesifikasi: Small <2T, Mid 2-10T, Big >10T
+function marketCapBucket(cap: number | null): MarketCapFilter | null {
+  if (cap === null || cap === undefined) return null
+  if (cap < 2_000_000_000_000) return 'SMALL'
+  if (cap <= 10_000_000_000_000) return 'MID'
+  return 'BIG'
+}
+
+function percentile(sorted: number[], p: number) {
+  if (sorted.length === 0) return 0
+  const idx = (sorted.length - 1) * p
+  const lo = Math.floor(idx)
+  const hi = Math.ceil(idx)
+  if (lo === hi) return sorted[lo]
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo)
+}
+
+// Warna heatmap: intensitas mengikuti besar %, hijau naik / merah turun,
+// abu-abu kalau data belum ada.
+function heatColor(pct: number | null) {
+  if (pct === null) return 'rgba(148,163,184,0.15)'
+  const clamped = Math.max(-5, Math.min(5, pct))
+  const intensity = Math.abs(clamped) / 5
+  const alpha = 0.15 + intensity * 0.55
+  return pct >= 0 ? `rgba(34,197,94,${alpha})` : `rgba(239,68,68,${alpha})`
+}
+
 export default function ScreenerPage() {
   const supabase = createClient()
 
@@ -32,6 +68,9 @@ export default function ScreenerPage() {
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
   const [activeSector, setActiveSector] = useState<string | null>(null)
+  const [marketCapFilter, setMarketCapFilter] = useState<MarketCapFilter>('ALL')
+  const [volumeFilter, setVolumeFilter] = useState<VolumeFilter>('ALL')
+  const [view, setView] = useState<ViewMode>('HEATMAP')
 
   useEffect(() => {
     let active = true
@@ -40,7 +79,9 @@ export default function ScreenerPage() {
       const [stocksRes, sectorsRes] = await Promise.all([
         supabase
           .from('stocks')
-          .select('id, ticker, name, sector_id, sectors ( name ), quotes ( price, previous_close )')
+          .select(
+            'id, ticker, name, sector_id, sectors ( name ), quotes ( price, previous_close, volume, market_cap )'
+          )
           .eq('is_active', true)
           .order('ticker'),
         supabase.from('sectors').select('id, name').order('name'),
@@ -58,24 +99,72 @@ export default function ScreenerPage() {
     }
   }, [])
 
+  // Kuartil volume dihitung dari seluruh saham aktif yang punya data volume,
+  // sesuai definisi: Rendah <P25, Sedang P25-P75, Tinggi >=P75
+  const volumeQuartiles = useMemo(() => {
+    const volumes = stocks
+      .map((s) => s.quotes?.volume)
+      .filter((v): v is number => v !== null && v !== undefined)
+      .sort((a, b) => a - b)
+    return { p25: percentile(volumes, 0.25), p75: percentile(volumes, 0.75) }
+  }, [stocks])
+
+  function volumeBucket(vol: number | null): VolumeFilter | null {
+    if (vol === null || vol === undefined) return null
+    if (vol < volumeQuartiles.p25) return 'RENDAH'
+    if (vol < volumeQuartiles.p75) return 'SEDANG'
+    return 'TINGGI'
+  }
+
   const filtered = useMemo(() => {
     let list = stocks
 
     if (activeSector) {
       list = list.filter((s) => s.sector_id === activeSector)
     }
-
     if (query) {
       const q = query.toUpperCase()
       list = list.filter(
         (s) => s.ticker.includes(q) || s.name.toUpperCase().includes(q)
       )
     }
+    if (marketCapFilter !== 'ALL') {
+      list = list.filter(
+        (s) => marketCapBucket(s.quotes?.market_cap ?? null) === marketCapFilter
+      )
+    }
+    if (volumeFilter !== 'ALL') {
+      list = list.filter(
+        (s) => volumeBucket(s.quotes?.volume ?? null) === volumeFilter
+      )
+    }
 
     return list.slice(0, 50)
-  }, [stocks, query, activeSector])
+  }, [stocks, query, activeSector, marketCapFilter, volumeFilter, volumeQuartiles])
+
+  // Agregat per sektor untuk heatmap: rata-rata persen perubahan
+  const sectorHeat = useMemo(() => {
+    return sectors.map((sector) => {
+      const members = stocks.filter((s) => s.sector_id === sector.id)
+      const pcts = members
+        .map((s) => pctChange(s.quotes?.price ?? null, s.quotes?.previous_close ?? null))
+        .filter((p): p is number => p !== null)
+      const avgPct = pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null
+      return { sector, avgPct, count: members.length }
+    })
+  }, [sectors, stocks])
 
   const hasSectorData = sectors.length > 0
+  const activeFilterCount =
+    (marketCapFilter !== 'ALL' ? 1 : 0) + (volumeFilter !== 'ALL' ? 1 : 0)
+
+  const pillActiveStyle = {
+    backgroundImage:
+      'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)',
+    color: '#fff',
+    borderColor: 'transparent',
+  }
+  const pillInactiveStyle = { color: '#94A3B8', borderColor: 'rgba(255,255,255,0.1)' }
 
   return (
     <main className="min-h-screen bg-[#0F172A] text-white px-4 py-6 max-w-[480px] mx-auto">
@@ -90,66 +179,154 @@ export default function ScreenerPage() {
         className="w-full mt-4 rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm placeholder:text-slate-500 focus:outline-none focus:border-[#3B82F6]"
       />
 
-      {hasSectorData ? (
-        <div className="mt-4 flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
-          <button
-            onClick={() => setActiveSector(null)}
-            className="shrink-0 rounded-full px-4 py-2 text-xs font-medium border transition-colors duration-200"
-            style={
-              !activeSector
-                ? {
-                    backgroundImage:
-                      'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)',
-                    color: '#fff',
-                    borderColor: 'transparent',
-                  }
-                : { color: '#94A3B8', borderColor: 'rgba(255,255,255,0.1)' }
-            }
-          >
-            Semua Sektor
-          </button>
-          {sectors.map((s) => {
-            const active = activeSector === s.id
-            return (
+      {/* Toggle view: Heatmap (default) vs List */}
+      <div className="mt-4 flex gap-2">
+        <button
+          onClick={() => setView('HEATMAP')}
+          className="flex-1 rounded-xl px-4 py-2 text-xs font-medium border transition-colors duration-200"
+          style={view === 'HEATMAP' ? pillActiveStyle : pillInactiveStyle}
+        >
+          Heatmap Sektor
+        </button>
+        <button
+          onClick={() => setView('LIST')}
+          className="flex-1 rounded-xl px-4 py-2 text-xs font-medium border transition-colors duration-200"
+          style={view === 'LIST' ? pillActiveStyle : pillInactiveStyle}
+        >
+          Daftar Saham
+        </button>
+      </div>
+
+      {/* Filter Market Cap & Volume */}
+      <div className="mt-4 space-y-2">
+        <div>
+          <p className="text-slate-500 text-[11px] mb-1.5">Market Cap</p>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {(
+              [
+                ['ALL', 'Semua'],
+                ['SMALL', 'Small <2T'],
+                ['MID', 'Mid 2-10T'],
+                ['BIG', 'Big >10T'],
+              ] as [MarketCapFilter, string][]
+            ).map(([key, label]) => (
               <button
-                key={s.id}
-                onClick={() => setActiveSector(s.id)}
-                className="shrink-0 rounded-full px-4 py-2 text-xs font-medium border transition-colors duration-200"
-                style={
-                  active
-                    ? {
-                        backgroundImage:
-                          'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)',
-                        color: '#fff',
-                        borderColor: 'transparent',
-                      }
-                    : { color: '#94A3B8', borderColor: 'rgba(255,255,255,0.1)' }
-                }
+                key={key}
+                onClick={() => setMarketCapFilter(key)}
+                className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-medium border transition-colors duration-200"
+                style={marketCapFilter === key ? pillActiveStyle : pillInactiveStyle}
               >
-                {s.name}
+                {label}
               </button>
-            )
-          })}
-        </div>
-      ) : (
-        !loading && (
-          <div className="mt-4 rounded-xl bg-white/5 border border-white/10 px-4 py-3">
-            <p className="text-slate-500 text-xs">
-              Heatmap Sektor menyusul — data sektor belum tersedia.
-            </p>
+            ))}
           </div>
-        )
+        </div>
+        <div>
+          <p className="text-slate-500 text-[11px] mb-1.5">Volume</p>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {(
+              [
+                ['ALL', 'Semua'],
+                ['RENDAH', 'Rendah'],
+                ['SEDANG', 'Sedang'],
+                ['TINGGI', 'Tinggi'],
+              ] as [VolumeFilter, string][]
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setVolumeFilter(key)}
+                className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-medium border transition-colors duration-200"
+                style={volumeFilter === key ? pillActiveStyle : pillInactiveStyle}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Filter Sektor (dipakai di view List) */}
+      {view === 'LIST' &&
+        (hasSectorData ? (
+          <div className="mt-4 flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+            <button
+              onClick={() => setActiveSector(null)}
+              className="shrink-0 rounded-full px-4 py-2 text-xs font-medium border transition-colors duration-200"
+              style={!activeSector ? pillActiveStyle : pillInactiveStyle}
+            >
+              Semua Sektor
+            </button>
+            {sectors.map((s) => {
+              const active = activeSector === s.id
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => setActiveSector(s.id)}
+                  className="shrink-0 rounded-full px-4 py-2 text-xs font-medium border transition-colors duration-200"
+                  style={active ? pillActiveStyle : pillInactiveStyle}
+                >
+                  {s.name}
+                </button>
+              )
+            })}
+          </div>
+        ) : (
+          !loading && (
+            <div className="mt-4 rounded-xl bg-white/5 border border-white/10 px-4 py-3">
+              <p className="text-slate-500 text-xs">Data sektor belum tersedia.</p>
+            </div>
+          )
+        ))}
+
+      {loading && <p className="mt-5 text-slate-500 text-sm">Memuat...</p>}
+
+      {/* HEATMAP VIEW */}
+      {!loading && view === 'HEATMAP' && (
+        <div className="mt-5">
+          {!hasSectorData ? (
+            <div className="rounded-xl bg-white/5 border border-white/10 px-4 py-3">
+              <p className="text-slate-500 text-xs">
+                Heatmap Sektor menyusul — data sektor belum tersedia.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {sectorHeat.map(({ sector, avgPct, count }) => (
+                <button
+                  key={sector.id}
+                  onClick={() => {
+                    setActiveSector(sector.id)
+                    setView('LIST')
+                  }}
+                  className="rounded-xl border border-white/10 px-3 py-3 text-left transition-colors duration-300"
+                  style={{ backgroundColor: heatColor(avgPct) }}
+                >
+                  <p className="text-sm font-semibold truncate">{sector.name}</p>
+                  <p className="text-xs mt-1 text-slate-200">
+                    {avgPct !== null ? `${avgPct >= 0 ? '+' : ''}${avgPct.toFixed(2)}%` : 'Data belum ada'}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">{count} saham</p>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
-      <div className="mt-5 space-y-2">
-        {loading && <p className="text-slate-500 text-sm">Memuat...</p>}
+      {/* LIST VIEW */}
+      {!loading && view === 'LIST' && (
+        <div className="mt-5 space-y-2">
+          {activeFilterCount > 0 && (
+            <p className="text-slate-500 text-[11px]">
+              {filtered.length} saham cocok dengan filter aktif
+            </p>
+          )}
 
-        {!loading && filtered.length === 0 && (
-          <p className="text-slate-500 text-sm">Saham atau berita tidak ditemukan.</p>
-        )}
+          {filtered.length === 0 && (
+            <p className="text-slate-500 text-sm">Saham atau berita tidak ditemukan.</p>
+          )}
 
-        {!loading &&
-          filtered.map((stock) => {
+          {filtered.map((stock) => {
             const price = stock.quotes?.price ?? null
             const prev = stock.quotes?.previous_close ?? null
             const pct = pctChange(price, prev)
@@ -186,7 +363,8 @@ export default function ScreenerPage() {
               </Link>
             )
           })}
-      </div>
+        </div>
+      )}
     </main>
   )
 }
