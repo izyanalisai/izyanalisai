@@ -11,6 +11,17 @@ type Stock = {
   name: string
   sector_id: string | null
   sectors: { name: string } | null
+  quotes: { price: number | null; previous_close: number | null } | null
+}
+
+function formatHarga(n: number | null) {
+  if (n === null || n === undefined) return '-'
+  return new Intl.NumberFormat('id-ID').format(n)
+}
+
+function pctChange(price: number | null, prev: number | null) {
+  if (price === null || prev === null || prev === 0) return null
+  return ((price - prev) / prev) * 100
 }
 
 export default function ScreenerPage() {
@@ -29,7 +40,7 @@ export default function ScreenerPage() {
       const [stocksRes, sectorsRes] = await Promise.all([
         supabase
           .from('stocks')
-          .select('id, ticker, name, sector_id, sectors ( name )')
+          .select('id, ticker, name, sector_id, sectors ( name ), quotes ( price, previous_close )')
           .eq('is_active', true)
           .order('ticker'),
         supabase.from('sectors').select('id, name').order('name'),
@@ -138,23 +149,43 @@ export default function ScreenerPage() {
         )}
 
         {!loading &&
-          filtered.map((stock) => (
-            <Link
-              key={stock.id}
-              href={`/saham/${stock.ticker}`}
-              className="flex items-center justify-between rounded-xl bg-white/5 border border-white/10 px-4 py-3 hover:border-[#8B5CF6] transition-colors duration-200"
-            >
-              <div className="min-w-0">
-                <p className="font-semibold text-sm">{stock.ticker}</p>
-                <p className="text-slate-400 text-xs truncate">{stock.name}</p>
-              </div>
-              {stock.sectors?.name && (
-                <span className="shrink-0 text-slate-500 text-[11px] bg-white/5 border border-white/10 rounded-full px-2.5 py-1 ml-2">
-                  {stock.sectors.name}
-                </span>
-              )}
-            </Link>
-          ))}
+          filtered.map((stock) => {
+            const price = stock.quotes?.price ?? null
+            const prev = stock.quotes?.previous_close ?? null
+            const pct = pctChange(price, prev)
+            const up = pct !== null && pct >= 0
+
+            return (
+              <Link
+                key={stock.id}
+                href={`/saham/${stock.ticker}`}
+                className="flex items-center justify-between rounded-xl bg-white/5 border border-white/10 px-4 py-3 hover:border-[#8B5CF6] transition-colors duration-200"
+              >
+                <div className="min-w-0">
+                  <p className="font-semibold text-sm">{stock.ticker}</p>
+                  <p className="text-slate-400 text-xs truncate">{stock.name}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {price !== null && (
+                    <div className="text-right">
+                      <p className="font-medium text-sm">{formatHarga(price)}</p>
+                      {pct !== null && (
+                        <p className={`text-xs ${up ? 'text-[#22C55E]' : 'text-[#EF4444]'}`}>
+                          {up ? '+' : ''}
+                          {pct.toFixed(2)}%
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {stock.sectors?.name && (
+                    <span className="text-slate-500 text-[11px] bg-white/5 border border-white/10 rounded-full px-2.5 py-1">
+                      {stock.sectors.name}
+                    </span>
+                  )}
+                </div>
+              </Link>
+            )
+          })}
       </div>
     </main>
   )

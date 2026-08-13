@@ -8,12 +8,7 @@ type Stock = {
   id: string
   ticker: string
   name: string
-  quotes: {
-    price: number | null
-    change_percent: number | null
-    quality: string | null
-    fetched_at: string | null
-  } | null
+  quotes: { price: number | null; previous_close: number | null } | null
 }
 
 function formatHarga(n: number | null) {
@@ -21,10 +16,9 @@ function formatHarga(n: number | null) {
   return new Intl.NumberFormat('id-ID').format(n)
 }
 
-function isStale(fetchedAt: string | null) {
-  if (!fetchedAt) return true
-  const diffMinutes = (Date.now() - new Date(fetchedAt).getTime()) / 60000
-  return diffMinutes > 30
+function pctChange(price: number | null, prev: number | null) {
+  if (price === null || prev === null || prev === 0) return null
+  return ((price - prev) / prev) * 100
 }
 
 export default function Home() {
@@ -36,7 +30,7 @@ export default function Home() {
     const supabase = createClient()
     supabase
       .from('stocks')
-      .select('id, ticker, name, quotes ( price, change_percent, quality, fetched_at )')
+      .select('id, ticker, name, quotes ( price, previous_close )')
       .eq('is_active', true)
       .order('ticker')
       .then(({ data }) => {
@@ -84,35 +78,33 @@ export default function Home() {
         )}
 
         {filtered.map((stock) => {
-          const quote = stock.quotes
-          const hasPrice = quote?.price != null
-          const stale = isStale(quote?.fetched_at ?? null)
-          const up = (quote?.change_percent ?? 0) >= 0
+          const price = stock.quotes?.price ?? null
+          const prev = stock.quotes?.previous_close ?? null
+          const pct = pctChange(price, prev)
+          const up = pct !== null && pct >= 0
 
           return (
             <Link
               key={stock.id}
               href={`/saham/${stock.ticker}`}
-              className="flex items-center justify-between rounded-xl bg-white/5 border border-white/10 px-4 py-3 hover:border-[#8B5CF6] transition-colors duration-200"
+              className="flex items-center justify-between rounded-xl bg-white/5 border border-white/10 px-4 py-3 hover:border-[#8B5CF6] transition-colors"
             >
-              <div className="min-w-0">
+              <div>
                 <p className="font-semibold text-sm">{stock.ticker}</p>
-                <p className="text-slate-400 text-xs truncate">{stock.name}</p>
+                <p className="text-slate-400 text-xs">{stock.name}</p>
               </div>
-
-              {hasPrice ? (
-                <div className="text-right shrink-0 ml-2">
-                  <p className="font-medium text-sm">{formatHarga(quote!.price)}</p>
-                  <p
-                    className={`text-xs ${up ? 'text-[#22C55E]' : 'text-[#EF4444]'}`}
-                  >
-                    {up ? '+' : ''}
-                    {quote!.change_percent?.toFixed(2) ?? '0.00'}%
-                    {stale && <span className="text-slate-600 ml-1">· Data tertunda</span>}
-                  </p>
+              {price !== null ? (
+                <div className="text-right">
+                  <p className="font-medium text-sm">{formatHarga(price)}</p>
+                  {pct !== null && (
+                    <p className={`text-xs ${up ? 'text-[#22C55E]' : 'text-[#EF4444]'}`}>
+                      {up ? '+' : ''}
+                      {pct.toFixed(2)}%
+                    </p>
+                  )}
                 </div>
               ) : (
-                <span className="text-slate-600 text-xs shrink-0 ml-2">Data harga menyusul</span>
+                <span className="text-slate-600 text-xs">Data menyusul</span>
               )}
             </Link>
           )
