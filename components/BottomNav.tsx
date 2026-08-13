@@ -88,8 +88,17 @@ const NAV_ITEMS: NavItem[] = [
   },
 ]
 
+const HIDDEN_PREFIXES = [
+  '/saham/', '/notifikasi', '/kalender', '/berita', '/riwayat-sinyal',
+  '/trading-plan', '/chat', '/berlangganan',
+]
+
 export default function BottomNav() {
   const pathname = usePathname()
+
+  if (HIDDEN_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) {
+    return null
+  }
 
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href)
