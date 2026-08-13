@@ -8,12 +8,14 @@ export default function DaftarPage() {
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
     setMessage(null)
+    setLoading(true)
     const supabase = createClient()
     const { error } = await supabase.auth.signUp({ email, password })
     if (error) {
@@ -21,6 +23,7 @@ export default function DaftarPage() {
     } else {
       setMessage('Cek email kamu untuk konfirmasi pendaftaran.')
     }
+    setLoading(false)
   }
 
   const handleGoogleSignUp = async () => {
@@ -40,53 +43,58 @@ export default function DaftarPage() {
   }
 
   return (
-    <main style={{ padding: 24, maxWidth: 400 }}>
-      <h1>Daftar</h1>
-      <form onSubmit={handleSignUp}>
-        <div style={{ marginBottom: 12 }}>
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{ width: '100%', padding: 8 }}
-            required
-          />
-        </div>
-        <div style={{ marginBottom: 12 }}>
-          <input
-            type="password"
-            placeholder="Password (min 8 karakter)"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={{ width: '100%', padding: 8 }}
-            required
-            minLength={8}
-          />
-        </div>
-        {error && <p style={{ color: 'red' }}>{error}</p>}
-        {message && <p style={{ color: 'green' }}>{message}</p>}
-        <button type="submit" style={{ padding: '8px 16px' }}>Daftar</button>
+    <main className="min-h-screen bg-[#0F172A] text-white px-4 py-10 max-w-[480px] mx-auto flex flex-col justify-center">
+      <h1
+        className="text-3xl font-bold bg-clip-text text-transparent mb-8 text-center"
+        style={{
+          backgroundImage:
+            'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)',
+        }}
+      >
+        Daftar
+      </h1>
+
+      <form onSubmit={handleSignUp} className="space-y-4">
+        <input
+          type="email"
+          placeholder="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm placeholder:text-slate-500 focus:outline-none focus:border-[#3B82F6]"
+          required
+        />
+        <input
+          type="password"
+          placeholder="Password (min 8 karakter)"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm placeholder:text-slate-500 focus:outline-none focus:border-[#3B82F6]"
+          required
+          minLength={8}
+        />
+
+        {error && <p className="text-[#EF4444] text-sm">{error}</p>}
+        {message && <p className="text-[#22C55E] text-sm">{message}</p>}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+          style={{
+            backgroundImage:
+              'linear-gradient(135deg, #3B82F6 0%, #8B5CF6 50%, #EC4899 100%)',
+          }}
+        >
+          {loading ? 'Memproses...' : 'Daftar'}
+        </button>
       </form>
 
-      <div style={{ margin: '16px 0', textAlign: 'center', color: '#888' }}>atau</div>
+      <div className="my-5 text-center text-slate-500 text-sm">atau</div>
 
       <button
         onClick={handleGoogleSignUp}
         disabled={googleLoading}
-        style={{
-          width: '100%',
-          padding: '8px 16px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 8,
-          border: '1px solid #ccc',
-          borderRadius: 6,
-          background: '#fff',
-          color: '#111',
-          cursor: googleLoading ? 'not-allowed' : 'pointer',
-        }}
+        className="w-full flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white hover:border-[#8B5CF6] transition-colors disabled:opacity-60"
       >
         <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
           <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z" />
@@ -97,8 +105,11 @@ export default function DaftarPage() {
         {googleLoading ? 'Menghubungkan...' : 'Daftar dengan Google'}
       </button>
 
-      <p style={{ marginTop: 12 }}>
-        Sudah punya akun? <a href="/login">Masuk</a>
+      <p className="mt-5 text-center text-sm text-slate-400">
+        Sudah punya akun?{' '}
+        <a href="/login" className="text-[#3B82F6] font-medium">
+          Masuk
+        </a>
       </p>
     </main>
   )
