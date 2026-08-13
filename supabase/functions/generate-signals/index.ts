@@ -1,0 +1,241 @@
+import { createClient } from 'jsr:@supabase/supabase-js@2'
+
+// Signal Engine baseline sesuai dokumen 9.3.1:
+// Score EMA(±2) + RSI(±2) + MACD(±2) + Stochastic(±1) + Volume(±1) + Candlestick(±2), total -10..+10.
+// Threshold: >=+5 BUY, <=-5 SELL, di antaranya HOLD (HOLD tidak disimpan sebagai signal baru).
+const CONCURRENCY = 20
+const SUPPORT_RESISTANCE_LOOKBACK = 20
+const ATR_PERIOD = 14
+
+type StockRow = { id: string; ticker: string }
+type CandleRow = { ts: string; open: number; high: number; low: number; close: number; volume: number | null }
+type IndicatorRow = {
+  ema5: number | null; ema9: number | null; ema21: number | null; ema50: number | null
+  rsi14: number | null; macd_line: number | null; macd_signal: number | null
+  stoch_k: number | null; stoch_d: number | null; volume_avg20: number | null
+}
+
+function computeATR(candles: CandleRow[], period = ATR_PERIOD): number | null {
+  if (candles.length < period + 1) return null
+  const trs: number[] = []
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i], prev = candles[i - 1]
+    const tr = Math.max(c.high - c.low, Math.abs(c.high - prev.close), Math.abs(c.low - prev.close))
+    trs.push(tr)
+  }
+  const lastN = trs.slice(-period)
+  return lastN.reduce((a, b) => a + b, 0) / lastN.length
+}
+
+function scoreSignal(ind: IndicatorRow, lastCandle: CandleRow, prevClose: number) {
+  let score = 0
+  const evidence: Record<string, string> = {}
+
+  if (ind.ema5 != null && ind.ema21 != null && ind.ema9 != null && ind.ema50 != null) {
+    if (ind.ema5 > ind.ema21 && ind.ema9 > ind.ema50) { score += 2; evidence.ema = 'bullish alignment' }
+    else if (ind.ema5 < ind.ema21 && ind.ema9 < ind.ema50) { score -= 2; evidence.ema = 'bearish alignment' }
+    else evidence.ema = 'neutral'
+  }
+
+  if (ind.rsi14 != null) {
+    if (ind.rsi14 > 55) { score += 2; evidence.rsi = `bullish (${ind.rsi14.toFixed(1)})` }
+    else if (ind.rsi14 < 45) { score -= 2; evidence.rsi = `bearish (${ind.rsi14.toFixed(1)})` }
+    else evidence.rsi = `neutral (${ind.rsi14.toFixed(1)})`
+  }
+
+  if (ind.macd_line != null && ind.macd_signal != null) {
+    if (ind.macd_line > ind.macd_signal) { score += 2; evidence.macd = 'bullish crossover' }
+    else { score -= 2; evidence.macd = 'bearish crossover' }
+  }
+
+  if (ind.stoch_k != null && ind.stoch_d != null) {
+    if (ind.stoch_k > ind.stoch_d && ind.stoch_k < 80) { score += 1; evidence.stochastic = 'bullish' }
+    else if (ind.stoch_k < ind.stoch_d && ind.stoch_k > 20) { score -= 1; evidence.stochastic = 'bearish' }
+    else evidence.stochastic = 'neutral/extreme'
+  }
+
+  const priceUp = lastCandle.close > prevClose
+  if (ind.volume_avg20 != null && lastCandle.volume != null) {
+    if (lastCandle.volume > ind.volume_avg20 * 1.5) {
+      if (priceUp) { score += 1; evidence.volume = 'spike + naik' }
+      else { score -= 1; evidence.volume = 'spike + turun' }
+    } else evidence.volume = 'normal'
+  }
+
+  const body = Math.abs(lastCandle.close - lastCandle.open)
+  const range = lastCandle.high - lastCandle.low
+  if (range > 0 && body / range > 0.6) {
+    if (lastCandle.close > lastCandle.open) { score += 2; evidence.candlestick = 'strong bullish candle' }
+    else { score -= 2; evidence.candlestick = 'strong bearish candle' }
+  } else evidence.candlestick = 'indecisive candle'
+
+  return { score, evidence }
+}
+
+function getExpiry(timeframe: string, now: Date): string {
+  const wibOffsetMs = 7 * 60 * 60 * 1000
+  const wibNow = new Date(now.getTime() + wibOffsetMs)
+  const expiryWib = new Date(Date.UTC(wibNow.getUTCFullYear(), wibNow.getUTCMonth(), wibNow.getUTCDate(), 15, 30, 0))
+  if (timeframe === 'D1' || timeframe === 'W1') {
+    expiryWib.setUTCDate(expiryWib.getUTCDate() + 1)
+  }
+  return new Date(expiryWib.getTime() - wibOffsetMs).toISOString()
+}
+
+Deno.serve(async (req: Request) => {
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+  )
+
+  const url = new URL(req.url)
+  const timeframe = (url.searchParams.get('timeframe') ?? 'D1').toUpperCase()
+  const offset = Number(url.searchParams.get('offset') ?? '0')
+  const limit = Number(url.searchParams.get('limit') ?? '300')
+
+  if (!['D1', 'W1', 'H1', 'H4'].includes(timeframe)) {
+    return new Response(JSON.stringify({ error: `timeframe tidak didukung: ${timeframe}` }), { status: 400 })
+  }
+
+  const { data: stocks, error } = await supabase
+    .from('stocks')
+    .select('id, ticker')
+    .eq('is_active', true)
+    .order('ticker')
+    .range(offset, offset + limit - 1)
+
+  if (error || !stocks) {
+    return new Response(JSON.stringify({ error: error?.message ?? 'no stocks' }), { status: 500 })
+  }
+
+  let totalBuy = 0, totalSell = 0, totalHold = 0, totalSkipped = 0, totalFailed = 0
+  const debugSamples: Record<string, string> = {}
+
+  for (let i = 0; i < stocks.length; i += CONCURRENCY) {
+    const batch = (stocks as StockRow[]).slice(i, i + CONCURRENCY)
+    const results = await Promise.allSettled(
+      batch.map(async (s) => {
+        const [{ data: candles, error: cErr }, { data: indRows, error: iErr }] = await Promise.all([
+          supabase.from('candles').select('ts, open, high, low, close, volume')
+            .eq('stock_id', s.id).eq('timeframe', timeframe)
+            .order('ts', { ascending: true }).limit(60),
+          supabase.from('indicators').select('ema5, ema9, ema21, ema50, rsi14, macd_line, macd_signal, stoch_k, stoch_d, volume_avg20')
+            .eq('stock_id', s.id).eq('timeframe', timeframe).maybeSingle(),
+        ])
+        if (cErr) throw cErr
+        if (iErr) throw iErr
+        return { stock: s, candles: (candles ?? []) as CandleRow[], indicator: indRows as IndicatorRow | null }
+      }),
+    )
+
+    for (const r of results) {
+      if (r.status !== 'fulfilled') {
+        totalFailed++
+        debugSamples[`error-${totalFailed}`] = String(r.reason)
+        continue
+      }
+      const { stock, candles, indicator } = r.value
+      if (!indicator || candles.length < ATR_PERIOD + 1) {
+        totalSkipped++
+        continue
+      }
+
+      const lastCandle = candles[candles.length - 1]
+      const prevClose = candles[candles.length - 2].close
+      const { score, evidence } = scoreSignal(indicator, lastCandle, prevClose)
+
+      let direction: 'BUY' | 'SELL' | null = null
+      if (score >= 5) direction = 'BUY'
+      else if (score <= -5) direction = 'SELL'
+
+      if (!direction) { totalHold++; continue }
+
+      const atr = computeATR(candles)
+      if (atr == null) { totalSkipped++; continue }
+
+      const recent = candles.slice(-SUPPORT_RESISTANCE_LOOKBACK)
+      const support = Math.min(...recent.map((c) => c.low))
+      const resistance = Math.max(...recent.map((c) => c.high))
+      const entry = lastCandle.close
+
+      let buyAreaLow: number, buyAreaHigh: number, stopLoss: number, tp1: number, tp2: number
+
+      if (direction === 'BUY') {
+        buyAreaLow = support
+        buyAreaHigh = entry
+        stopLoss = entry - 1.5 * atr
+        const risk = entry - stopLoss
+        tp1 = entry + 1.5 * risk
+        tp2 = entry + 3 * risk
+      } else {
+        buyAreaLow = entry
+        buyAreaHigh = resistance
+        stopLoss = entry + 1.5 * atr
+        const risk = stopLoss - entry
+        tp1 = entry - 1.5 * risk
+        tp2 = entry - 3 * risk
+      }
+
+      const confidence = Math.min(95, 50 + Math.abs(score) * 5)
+
+      const { data: oldActive } = await supabase
+        .from('signals')
+        .select('id')
+        .eq('stock_id', stock.id)
+        .eq('timeframe', timeframe)
+        .eq('status', 'ACTIVE')
+        .is('superseded_by', null)
+
+      const { data: inserted, error: insErr } = await supabase
+        .from('signals')
+        .insert({
+          stock_id: stock.id,
+          timeframe,
+          direction,
+          entry_price: entry,
+          buy_area_low: buyAreaLow,
+          buy_area_high: buyAreaHigh,
+          tp1, tp2,
+          stop_loss: stopLoss,
+          risk_reward: 1.5,
+          confidence_score: confidence,
+          status: 'ACTIVE',
+          support_level: support,
+          resistance_level: resistance,
+          formula_version: 'baseline_v1',
+          engine_version: 'v1',
+          evidence: { score, ...evidence },
+          triggered_at: new Date().toISOString(),
+          expires_at: getExpiry(timeframe, new Date()),
+        })
+        .select('id')
+        .single()
+
+      if (insErr || !inserted) {
+        totalFailed++
+        debugSamples[stock.ticker] = String(insErr?.message)
+        continue
+      }
+
+      if (oldActive && oldActive.length > 0) {
+        await supabase
+          .from('signals')
+          .update({ status: 'INVALIDATED', superseded_by: inserted.id })
+          .in('id', oldActive.map((o) => o.id))
+      }
+
+      if (direction === 'BUY') totalBuy++
+      else totalSell++
+    }
+  }
+
+  return new Response(
+    JSON.stringify({
+      timeframe, offset, limit, total: stocks.length,
+      buy: totalBuy, sell: totalSell, hold_no_signal: totalHold,
+      skipped_insufficient_data: totalSkipped, failed: totalFailed,
+      debug_samples: debugSamples,
+    }),
+    { headers: { 'Content-Type': 'application/json' } },
+  )
+})
