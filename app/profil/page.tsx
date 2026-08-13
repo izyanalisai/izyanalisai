@@ -17,10 +17,11 @@ const RISK_LABELS: Record<string, string> = {
   agresif: 'Agresif',
 }
 
-function MenuLink({ label, hint }: { label: string; hint?: string }) {
+function MenuLink({ label, hint, href }: { label: string; hint?: string; href?: string }) {
+  const router = useRouter()
   return (
     <button
-      onClick={() => alert(`${label} segera hadir.`)}
+      onClick={() => (href ? router.push(href) : alert(`${label} segera hadir.`))}
       className="w-full flex items-center justify-between px-4 py-3.5 text-sm text-slate-200 hover:bg-white/5 transition-colors duration-200"
     >
       <span>{label}</span>
@@ -203,7 +204,7 @@ export default function ProfilPage() {
         <div className="mt-5 rounded-xl bg-white/5 border border-white/10 divide-y divide-white/5 overflow-hidden">
           <MenuLink label="Notifikasi" />
           <MenuLink label="Riwayat Sinyal" />
-          <MenuLink label="Trading Plan" />
+          <MenuLink label="Trading Plan" href="/trading-plan" />
           <a
             href="https://wa.me/6285178268451"
             target="_blank"

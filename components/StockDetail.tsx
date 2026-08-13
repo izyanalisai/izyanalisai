@@ -386,7 +386,7 @@ export default function StockDetail({ ticker }: { ticker: string }) {
                 : 'Tambah ke Watchlist'}
           </button>
           <button
-            onClick={() => alert('Trading Plan segera hadir.')}
+            onClick={() => (window.location.href = '/trading-plan')}
             className="flex-1 rounded-xl border border-white/10 px-4 py-3 text-sm font-medium text-slate-300"
           >
             Lihat Trading Plan
