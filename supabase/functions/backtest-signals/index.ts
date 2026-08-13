@@ -231,6 +231,8 @@ Deno.serve(async (req: Request) => {
 
   const allTrades: Trade[] = []
   const missingTickers: string[] = []
+  let earliestTs: string | null = null
+  let latestTs: string | null = null
 
   for (const stock of stocks as { id: string; ticker: string }[]) {
     const { data: candleRows, error: cErr } = await supabase
@@ -246,6 +248,16 @@ Deno.serve(async (req: Request) => {
     }
     const candles = candleRows as CandleRow[]
     const closes = candles.map((c) => c.close)
+
+    // Lacak rentang tanggal langsung dari data yang sudah kita fetch, bukan
+    // query terpisah ke DB di akhir -- query "order by ts limit 1" tanpa
+    // filter stock_id itu sort atas ratusan ribu baris candles dan bisa
+    // kena statement timeout, yang sebelumnya menggagalkan insert hasil
+    // backtest walau proses intinya sendiri sudah selesai.
+    const first = candles[0].ts
+    const last = candles[candles.length - 1].ts
+    if (earliestTs === null || first < earliestTs) earliestTs = first
+    if (latestTs === null || last > latestTs) latestTs = last
 
     const ema5 = ema(closes, 5), ema9 = ema(closes, 9), ema21 = ema(closes, 21), ema50 = ema(closes, 50)
     const rsi14 = rsi(closes, 14)
@@ -336,26 +348,13 @@ Deno.serve(async (req: Request) => {
   if (maxDrawdownPct > 25) failReasons.push(`Max Drawdown ${maxDrawdownPct.toFixed(1)}% > 25%`)
   const passed = failReasons.length === 0 && closedTrades > 0
 
-  const { data: candleDates } = await supabase
-    .from('candles')
-    .select('ts')
-    .eq('timeframe', 'D1')
-    .order('ts', { ascending: true })
-    .limit(1)
-  const { data: candleDatesEnd } = await supabase
-    .from('candles')
-    .select('ts')
-    .eq('timeframe', 'D1')
-    .order('ts', { ascending: false })
-    .limit(1)
-
   const { data: inserted, error: insErr } = await supabase
     .from('backtest_runs')
     .insert({
       formula_version: FORMULA_VERSION,
       timeframe: 'D1',
-      period_start: candleDates?.[0]?.ts?.slice(0, 10) ?? null,
-      period_end: candleDatesEnd?.[0]?.ts?.slice(0, 10) ?? null,
+      period_start: earliestTs?.slice(0, 10) ?? new Date().toISOString().slice(0, 10),
+      period_end: latestTs?.slice(0, 10) ?? new Date().toISOString().slice(0, 10),
       universe: 'LQ45',
       total_stocks: stocks.length - missingTickers.length,
       total_trades: allTrades.length,
