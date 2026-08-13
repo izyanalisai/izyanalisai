@@ -33,28 +33,42 @@ export default function Header() {
   }
 
   return (
-    <header style={{
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      padding: '12px 24px',
-      borderBottom: '1px solid #333',
-    }}>
-      <strong>IzyAnalisAI</strong>
-      {!loading && (
-        user ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span>{user.email}</span>
-            <button onClick={handleLogout} style={{ padding: '6px 12px' }}>
-              Keluar
-            </button>
-          </div>
-        ) : (
-          <a href="/login" style={{ padding: '6px 12px' }}>
-            Masuk
-          </a>
-        )
-      )}
+    <header className="sticky top-0 z-30 lg:hidden bg-[#0F172A]/95 backdrop-blur">
+      <div className="flex items-center justify-between px-4 py-3 max-w-[480px] mx-auto">
+        <span className="font-bold text-sm text-white">IzyAnalisAi</span>
+        {!loading &&
+          (user ? (
+            <div className="flex items-center gap-3">
+              <span className="text-slate-400 text-xs truncate max-w-[140px]">
+                {user.email}
+              </span>
+              <button
+                onClick={handleLogout}
+                className="text-xs font-medium text-slate-300 border border-white/10 rounded-full px-3 py-1.5 hover:border-[#8B5CF6] transition-colors duration-200"
+              >
+                Keluar
+              </button>
+            </div>
+          ) : (
+            <a
+              href="/login"
+              className="text-xs font-medium text-white rounded-full px-3 py-1.5"
+              style={{
+                backgroundImage:
+                  'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)',
+              }}
+            >
+              Masuk
+            </a>
+          ))}
+      </div>
+      <div
+        className="h-px w-full opacity-60"
+        style={{
+          backgroundImage:
+            'linear-gradient(90deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)',
+        }}
+      />
     </header>
   )
 }

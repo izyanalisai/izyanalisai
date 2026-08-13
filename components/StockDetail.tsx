@@ -126,7 +126,7 @@ export default function StockDetail({ ticker }: { ticker: string }) {
     setWatchlistLoading(true)
     setWatchlistMsg(null)
 
-    let { data: watchlists } = await supabase
+    const { data: watchlists } = await supabase
       .from('watchlists')
       .select('id')
       .eq('user_id', user.id)
