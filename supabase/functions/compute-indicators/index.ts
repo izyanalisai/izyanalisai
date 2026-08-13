@@ -87,6 +87,15 @@ function stochastic(highs: number[], lows: number[], closes: number[], period = 
   return { k: kSmoothed, d: dSmoothed }
 }
 
+function isSameWibDay(tsIso: string, now: Date): boolean {
+  const wibOffsetMs = 7 * 60 * 60 * 1000
+  const a = new Date(new Date(tsIso).getTime() + wibOffsetMs)
+  const b = new Date(now.getTime() + wibOffsetMs)
+  return a.getUTCFullYear() === b.getUTCFullYear() &&
+    a.getUTCMonth() === b.getUTCMonth() &&
+    a.getUTCDate() === b.getUTCDate()
+}
+
 Deno.serve(async (req: Request) => {
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -139,7 +148,18 @@ Deno.serve(async (req: Request) => {
         debugSamples[`error-${totalFailed}`] = String(r.reason)
         continue
       }
-      const { stock, candles } = r.value
+      const { stock, candles: rawCandles } = r.value
+
+      // Sama seperti generate-signals: candle D1/W1 hari ini masih bisa berubah
+      // (live/belum closed), jadi jangan dipakai sebagai bar terakhir buat indikator.
+      let candles = rawCandles
+      if ((timeframe === 'D1' || timeframe === 'W1') && candles.length > 0) {
+        const last = candles[candles.length - 1]
+        if (isSameWibDay(last.ts, new Date())) {
+          candles = candles.slice(0, -1)
+        }
+      }
+
       if (candles.length < MIN_BARS) {
         totalSkipped++
         continue

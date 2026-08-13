@@ -31,18 +31,25 @@ Deno.serve(async (_req: Request) => {
   }
 
   const stockIds = [...new Set((signals as SignalRow[]).map((s) => s.stock_id))]
-  const { data: quotes, error: qErr } = await supabase
-    .from('quotes')
-    .select('stock_id, price')
-    .in('stock_id', stockIds)
 
-  if (qErr) {
-    return new Response(JSON.stringify({ error: qErr.message }), { status: 500 })
-  }
-
+  // Query quotes per-chunk. .in() dikirim via GET dan stockIds di-embed di URL query
+  // string — kalau jumlah saham banyak, URL bisa kepanjangan dan kena HTTP/2 header
+  // size limit di proxy Supabase (muncul sebagai "stream error: Protocol error").
+  const QUOTE_CHUNK_SIZE = 150
   const priceMap = new Map<string, number>()
-  for (const q of quotes ?? []) {
-    if (q.price != null) priceMap.set(q.stock_id, Number(q.price))
+  for (let i = 0; i < stockIds.length; i += QUOTE_CHUNK_SIZE) {
+    const idChunk = stockIds.slice(i, i + QUOTE_CHUNK_SIZE)
+    const { data: quotes, error: qErr } = await supabase
+      .from('quotes')
+      .select('stock_id, price')
+      .in('stock_id', idChunk)
+
+    if (qErr) {
+      return new Response(JSON.stringify({ error: qErr.message }), { status: 500 })
+    }
+    for (const q of quotes ?? []) {
+      if (q.price != null) priceMap.set(q.stock_id, Number(q.price))
+    }
   }
 
   const now = new Date()

@@ -72,6 +72,15 @@ function scoreSignal(ind: IndicatorRow, lastCandle: CandleRow, prevClose: number
   return { score, evidence }
 }
 
+function isSameWibDay(tsIso: string, now: Date): boolean {
+  const wibOffsetMs = 7 * 60 * 60 * 1000
+  const a = new Date(new Date(tsIso).getTime() + wibOffsetMs)
+  const b = new Date(now.getTime() + wibOffsetMs)
+  return a.getUTCFullYear() === b.getUTCFullYear() &&
+    a.getUTCMonth() === b.getUTCMonth() &&
+    a.getUTCDate() === b.getUTCDate()
+}
+
 function getExpiry(timeframe: string, now: Date): string {
   const wibOffsetMs = 7 * 60 * 60 * 1000
   const wibNow = new Date(now.getTime() + wibOffsetMs)
@@ -135,13 +144,26 @@ Deno.serve(async (req: Request) => {
         continue
       }
       const { stock, candles, indicator } = r.value
-      if (!indicator || candles.length < ATR_PERIOD + 1) {
+
+      // Untuk D1/W1, candle terakhir bisa masih "live" (hari/minggu berjalan,
+      // belum closed) dan closenya berubah tiap kali fetch-candles jalan ulang.
+      // Basis entry harus dari candle yang sudah final, biar TP/SL yang sudah
+      // di-generate tidak jadi basi begitu candle live ke-upsert dengan harga baru.
+      let usableCandles = candles
+      if ((timeframe === 'D1' || timeframe === 'W1') && usableCandles.length > 0) {
+        const last = usableCandles[usableCandles.length - 1]
+        if (isSameWibDay(last.ts, new Date())) {
+          usableCandles = usableCandles.slice(0, -1)
+        }
+      }
+
+      if (!indicator || usableCandles.length < ATR_PERIOD + 1) {
         totalSkipped++
         continue
       }
 
-      const lastCandle = candles[candles.length - 1]
-      const prevClose = candles[candles.length - 2].close
+      const lastCandle = usableCandles[usableCandles.length - 1]
+      const prevClose = usableCandles[usableCandles.length - 2].close
       const { score, evidence } = scoreSignal(indicator, lastCandle, prevClose)
 
       let direction: 'BUY' | 'SELL' | null = null
@@ -150,10 +172,10 @@ Deno.serve(async (req: Request) => {
 
       if (!direction) { totalHold++; continue }
 
-      const atr = computeATR(candles)
+      const atr = computeATR(usableCandles)
       if (atr == null) { totalSkipped++; continue }
 
-      const recent = candles.slice(-SUPPORT_RESISTANCE_LOOKBACK)
+      const recent = usableCandles.slice(-SUPPORT_RESISTANCE_LOOKBACK)
       const support = Math.min(...recent.map((c) => c.low))
       const resistance = Math.max(...recent.map((c) => c.high))
       const entry = lastCandle.close

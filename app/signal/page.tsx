@@ -16,7 +16,7 @@ type SignalRow = {
   stocks: { ticker: string; name: string } | null
 }
 
-type FilterValue = 'ALL' | 'BUY' | 'SELL' | 'HOLD'
+type FilterValue = 'ALL' | 'BUY' | 'SELL'
 
 const directionStyle: Record<string, { bg: string; text: string }> = {
   BUY: { bg: 'bg-[#22C55E]/15', text: 'text-[#22C55E]' },
@@ -28,7 +28,6 @@ const FILTERS: { value: FilterValue; label: string }[] = [
   { value: 'ALL', label: 'Semua' },
   { value: 'BUY', label: 'BUY' },
   { value: 'SELL', label: 'SELL' },
-  { value: 'HOLD', label: 'HOLD' },
 ]
 
 function formatHarga(n: number | null) {
@@ -53,7 +52,7 @@ export default function SignalPage() {
         .select(
           'id, direction, buy_area_low, buy_area_high, tp1, stop_loss, confidence_score, created_at, stocks ( ticker, name )'
         )
-        .eq('status', 'ACTIVE')
+        .in('status', ['ACTIVE', 'HIT_TP1'])
         .order('confidence_score', { ascending: false, nullsFirst: false })
 
       if (!active) return
