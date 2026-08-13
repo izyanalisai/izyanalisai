@@ -2,7 +2,6 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -10,7 +9,6 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
-  const router = useRouter()
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -22,7 +20,11 @@ export default function LoginPage() {
       setError(error.message)
       setLoading(false)
     } else {
-      router.push('/')
+      // Pakai hard navigation (bukan router.push) supaya request berikutnya
+      // benar-benar request baru ke server — middleware jadi baca cookie
+      // session yang sudah pasti fresh, bukan state client lama yang
+      // kadang belum sinkron (penyebab kadang harus klik 2x).
+      window.location.href = '/'
     }
   }
 
