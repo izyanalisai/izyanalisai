@@ -16,6 +16,7 @@ const ATR_PERIOD = 14
 const SUPPORT_RESISTANCE_LOOKBACK = 20
 const MAX_HOLD_BARS = 20 // batas "1 bulan" untuk D1 (~20 hari bursa); trade yang belum kena TP/SL dianggap timeout, bukan win/loss
 const FEE_SLIPPAGE_PCT = 0.0025 // asumsi 0.25% round-trip (fee beli+jual+slippage), dikurangkan dari tiap hasil trade
+const FIXED_RISK_PCT = 0.01 // risiko 1% modal per trade untuk simulasi equity curve (position sizing tetap, bukan all-in)
 
 // LQ45 periode 3 Agustus - 30 Oktober 2026 (sumber: pengumuman BEI 27/7/2026)
 const LQ45_TICKERS = [
@@ -170,6 +171,7 @@ type Trade = {
   tp1: number
   outcome: 'WIN' | 'LOSS' | 'TIMEOUT'
   pnl_pct: number
+  risk_pct: number // jarak entry ke stop_loss dalam persen harga, dipakai buat normalisasi equity curve
   bars_held: number
 }
 
@@ -182,30 +184,31 @@ function simulateTrade(
   stopLoss: number,
   tp1: number,
 ): Trade {
+  const riskPct = Math.abs(entry - stopLoss) / entry
   for (let i = entryIdx + 1; i <= Math.min(entryIdx + MAX_HOLD_BARS, candles.length - 1); i++) {
     const bar = candles[i]
     if (direction === 'BUY') {
       // Konservatif: kalau SL & TP1 sama-sama kesentuh di bar yang sama, anggap SL duluan (worst case)
       if (bar.low <= stopLoss) {
         const pnl = (stopLoss - entry) / entry - FEE_SLIPPAGE_PCT
-        return { ticker, direction, entry_ts: candles[entryIdx].ts, entry, stop_loss: stopLoss, tp1, outcome: 'LOSS', pnl_pct: pnl, bars_held: i - entryIdx }
+        return { ticker, direction, entry_ts: candles[entryIdx].ts, entry, stop_loss: stopLoss, tp1, outcome: 'LOSS', pnl_pct: pnl, risk_pct: riskPct, bars_held: i - entryIdx }
       }
       if (bar.high >= tp1) {
         const pnl = (tp1 - entry) / entry - FEE_SLIPPAGE_PCT
-        return { ticker, direction, entry_ts: candles[entryIdx].ts, entry, stop_loss: stopLoss, tp1, outcome: 'WIN', pnl_pct: pnl, bars_held: i - entryIdx }
+        return { ticker, direction, entry_ts: candles[entryIdx].ts, entry, stop_loss: stopLoss, tp1, outcome: 'WIN', pnl_pct: pnl, risk_pct: riskPct, bars_held: i - entryIdx }
       }
     } else {
       if (bar.high >= stopLoss) {
         const pnl = (entry - stopLoss) / entry - FEE_SLIPPAGE_PCT
-        return { ticker, direction, entry_ts: candles[entryIdx].ts, entry, stop_loss: stopLoss, tp1, outcome: 'LOSS', pnl_pct: pnl, bars_held: i - entryIdx }
+        return { ticker, direction, entry_ts: candles[entryIdx].ts, entry, stop_loss: stopLoss, tp1, outcome: 'LOSS', pnl_pct: pnl, risk_pct: riskPct, bars_held: i - entryIdx }
       }
       if (bar.low <= tp1) {
         const pnl = (entry - tp1) / entry - FEE_SLIPPAGE_PCT
-        return { ticker, direction, entry_ts: candles[entryIdx].ts, entry, stop_loss: stopLoss, tp1, outcome: 'WIN', pnl_pct: pnl, bars_held: i - entryIdx }
+        return { ticker, direction, entry_ts: candles[entryIdx].ts, entry, stop_loss: stopLoss, tp1, outcome: 'WIN', pnl_pct: pnl, risk_pct: riskPct, bars_held: i - entryIdx }
       }
     }
   }
-  return { ticker, direction, entry_ts: candles[entryIdx].ts, entry, stop_loss: stopLoss, tp1, outcome: 'TIMEOUT', pnl_pct: 0, bars_held: MAX_HOLD_BARS }
+  return { ticker, direction, entry_ts: candles[entryIdx].ts, entry, stop_loss: stopLoss, tp1, outcome: 'TIMEOUT', pnl_pct: 0, risk_pct: riskPct, bars_held: MAX_HOLD_BARS }
 }
 
 Deno.serve(async (req: Request) => {
@@ -332,11 +335,19 @@ Deno.serve(async (req: Request) => {
   const grossLoss = Math.abs(losses.reduce((sum, t) => sum + t.pnl_pct, 0))
   const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : null
 
-  // Max drawdown: dari equity curve kumulatif sepanjang urutan trade closed (diurutkan waktu)
+  // Max drawdown: equity curve dengan position sizing TETAP (risiko FIXED_RISK_PCT
+  // dari modal per trade), bukan all-in 100% modal tiap trade. Sebelumnya equity
+  // di-compound penuh per trade (equity *= 1 + pnl_pct) seolah satu strategi pakai
+  // seluruh modal berturut-turut di 45 saham berbeda -- dengan profit factor < 1,
+  // itu bikin equity ambruk ke ~0 secara matematis dan Max Drawdown selalu ~100%,
+  // bukan mencerminkan portofolio nyata yang membagi modal ke banyak posisi.
+  // r_multiple = pnl_pct / risk_pct (kelipatan risiko yang di-set di stop loss),
+  // lalu equity berubah sebesar FIXED_RISK_PCT * r_multiple per trade.
   const sortedClosed = [...wins, ...losses].sort((a, b) => a.entry_ts.localeCompare(b.entry_ts))
   let equity = 1, peak = 1, maxDD = 0
   for (const t of sortedClosed) {
-    equity *= 1 + t.pnl_pct
+    const rMultiple = t.risk_pct > 0 ? t.pnl_pct / t.risk_pct : 0
+    equity *= 1 + FIXED_RISK_PCT * rMultiple
     if (equity > peak) peak = equity
     const dd = (peak - equity) / peak
     if (dd > maxDD) maxDD = dd
