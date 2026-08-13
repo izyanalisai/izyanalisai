@@ -11,7 +11,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 // Kalau generate-signals diubah, file ini harus diubah bersamaan lalu
 // dijalankan ulang dengan formula_version baru.
 
-const FORMULA_VERSION = 'baseline_v4'
+const FORMULA_VERSION = 'baseline_v5'
 const ATR_PERIOD = 14
 const SUPPORT_RESISTANCE_LOOKBACK = 20
 const MAX_HOLD_BARS = 20 // batas "1 bulan" untuk D1 (~20 hari bursa); trade yang belum kena TP/SL dianggap timeout, bukan win/loss
@@ -120,42 +120,27 @@ function computeATR(candles: CandleRow[], period = ATR_PERIOD): number | null {
 }
 
 function scoreSignal(ind: IndicatorPoint, lastCandle: CandleRow, prevClose: number) {
-  let score = 0
+  // v5: confluence-based -- WAJIB identik dengan generate-signals/index.ts
+  const rsiBullish = ind.rsi14 != null && ind.rsi14 > 55
+  const rsiBearish = ind.rsi14 != null && ind.rsi14 < 45
+  const macdBullish = ind.macd_line != null && ind.macd_signal != null && ind.macd_line > ind.macd_signal
+  const macdBearish = ind.macd_line != null && ind.macd_signal != null && ind.macd_line < ind.macd_signal
+
+  const confluenceBuy = rsiBullish && macdBullish
+  const confluenceSell = rsiBearish && macdBearish
+  if (!confluenceBuy && !confluenceSell) return 0
+
+  let score = confluenceBuy ? 5 : -5
 
   if (ind.ema5 != null && ind.ema21 != null && ind.ema9 != null && ind.ema50 != null) {
-    if (ind.ema5 > ind.ema21 && ind.ema9 > ind.ema50) score += 2
-    else if (ind.ema5 < ind.ema21 && ind.ema9 < ind.ema50) score -= 2
+    if (confluenceBuy && ind.ema5 > ind.ema21 && ind.ema9 > ind.ema50) score += 2
+    else if (confluenceSell && ind.ema5 < ind.ema21 && ind.ema9 < ind.ema50) score -= 2
   }
-
-  if (ind.rsi14 != null) {
-    // Bobot dinaikkan (v4): diagnostik per-indikator PF 1.15, paling kuat di BUY-side
-    if (ind.rsi14 > 55) score += 3
-    else if (ind.rsi14 < 45) score -= 3
-  }
-
-  if (ind.macd_line != null && ind.macd_signal != null) {
-    // Bobot dinaikkan (v4): diagnostik per-indikator PF 1.07
-    if (ind.macd_line > ind.macd_signal) score += 3
-    else score -= 3
-  }
-
-  // Stochastic dihapus dari skor (v4): diagnostik menunjukkan PF ~1.0,
-  // nyaris tidak menyumbang edge, cuma nambah noise ke skor gabungan.
 
   const priceUp = lastCandle.close > prevClose
-  if (ind.volume_avg20 != null && lastCandle.volume != null) {
-    if (lastCandle.volume > ind.volume_avg20 * 1.5) {
-      if (priceUp) score += 1
-      else score -= 1
-    }
-  }
-
-  const body = Math.abs(lastCandle.close - lastCandle.open)
-  const range = lastCandle.high - lastCandle.low
-  if (range > 0 && body / range > 0.6) {
-    // Bobot diturunkan (v4): diagnostik PF ~1.0, kontribusi lemah
-    if (lastCandle.close > lastCandle.open) score += 1
-    else score -= 1
+  if (ind.volume_avg20 != null && lastCandle.volume != null && lastCandle.volume > ind.volume_avg20 * 1.5) {
+    if (confluenceBuy && priceUp) score += 1
+    else if (confluenceSell && !priceUp) score -= 1
   }
 
   return score

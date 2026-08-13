@@ -28,46 +28,49 @@ function computeATR(candles: CandleRow[], period = ATR_PERIOD): number | null {
 }
 
 function scoreSignal(ind: IndicatorRow, lastCandle: CandleRow, prevClose: number) {
+  // v5: confluence-based. Sinyal cuma valid kalau RSI DAN MACD (2 indikator
+  // paling kuat menurut diagnostik per-indikator, PF 1.15 & 1.07) SAMA-SAMA
+  // searah -- bukan dijumlah bebas kayak v1-v4 yang PF-nya stuck ~1.0-1.1.
+  // EMA/Volume/Candle cuma nambah confidence kalau confluence-nya sudah ada,
+  // TIDAK bisa menggantikan confluence RSI+MACD.
   let score = 0
   const evidence: Record<string, string> = {}
 
+  const rsiBullish = ind.rsi14 != null && ind.rsi14 > 55
+  const rsiBearish = ind.rsi14 != null && ind.rsi14 < 45
+  const macdBullish = ind.macd_line != null && ind.macd_signal != null && ind.macd_line > ind.macd_signal
+  const macdBearish = ind.macd_line != null && ind.macd_signal != null && ind.macd_line < ind.macd_signal
+
+  const confluenceBuy = rsiBullish && macdBullish
+  const confluenceSell = rsiBearish && macdBearish
+
+  if (!confluenceBuy && !confluenceSell) {
+    evidence.confluence = 'tidak ada -- RSI dan MACD tidak searah'
+    return { score: 0, evidence }
+  }
+
+  if (confluenceBuy) {
+    score += 5
+    evidence.rsi = `bullish (${ind.rsi14!.toFixed(1)})`
+    evidence.macd = 'bullish crossover'
+  } else {
+    score -= 5
+    evidence.rsi = `bearish (${ind.rsi14!.toFixed(1)})`
+    evidence.macd = 'bearish crossover'
+  }
+
   if (ind.ema5 != null && ind.ema21 != null && ind.ema9 != null && ind.ema50 != null) {
-    if (ind.ema5 > ind.ema21 && ind.ema9 > ind.ema50) { score += 2; evidence.ema = 'bullish alignment' }
-    else if (ind.ema5 < ind.ema21 && ind.ema9 < ind.ema50) { score -= 2; evidence.ema = 'bearish alignment' }
-    else evidence.ema = 'neutral'
+    if (confluenceBuy && ind.ema5 > ind.ema21 && ind.ema9 > ind.ema50) { score += 2; evidence.ema = 'bullish alignment' }
+    else if (confluenceSell && ind.ema5 < ind.ema21 && ind.ema9 < ind.ema50) { score -= 2; evidence.ema = 'bearish alignment' }
+    else evidence.ema = 'neutral/tidak konfirmasi'
   }
-
-  if (ind.rsi14 != null) {
-    // Bobot dinaikkan (v4): diagnostik per-indikator PF 1.15, paling kuat di BUY-side
-    if (ind.rsi14 > 55) { score += 3; evidence.rsi = `bullish (${ind.rsi14.toFixed(1)})` }
-    else if (ind.rsi14 < 45) { score -= 3; evidence.rsi = `bearish (${ind.rsi14.toFixed(1)})` }
-    else evidence.rsi = `neutral (${ind.rsi14.toFixed(1)})`
-  }
-
-  if (ind.macd_line != null && ind.macd_signal != null) {
-    // Bobot dinaikkan (v4): diagnostik per-indikator PF 1.07
-    if (ind.macd_line > ind.macd_signal) { score += 3; evidence.macd = 'bullish crossover' }
-    else { score -= 3; evidence.macd = 'bearish crossover' }
-  }
-
-  // Stochastic dihapus dari skor (v4): diagnostik menunjukkan PF ~1.0,
-  // nyaris tidak menyumbang edge, cuma nambah noise ke skor gabungan.
 
   const priceUp = lastCandle.close > prevClose
-  if (ind.volume_avg20 != null && lastCandle.volume != null) {
-    if (lastCandle.volume > ind.volume_avg20 * 1.5) {
-      if (priceUp) { score += 1; evidence.volume = 'spike + naik' }
-      else { score -= 1; evidence.volume = 'spike + turun' }
-    } else evidence.volume = 'normal'
-  }
-
-  const body = Math.abs(lastCandle.close - lastCandle.open)
-  const range = lastCandle.high - lastCandle.low
-  if (range > 0 && body / range > 0.6) {
-    // Bobot diturunkan (v4): diagnostik PF ~1.0, kontribusi lemah
-    if (lastCandle.close > lastCandle.open) { score += 1; evidence.candlestick = 'strong bullish candle' }
-    else { score -= 1; evidence.candlestick = 'strong bearish candle' }
-  } else evidence.candlestick = 'indecisive candle'
+  if (ind.volume_avg20 != null && lastCandle.volume != null && lastCandle.volume > ind.volume_avg20 * 1.5) {
+    if (confluenceBuy && priceUp) { score += 1; evidence.volume = 'spike + naik' }
+    else if (confluenceSell && !priceUp) { score -= 1; evidence.volume = 'spike + turun' }
+    else evidence.volume = 'spike tidak konfirmasi arah'
+  } else evidence.volume = 'normal'
 
   return { score, evidence }
 }
@@ -234,7 +237,7 @@ Deno.serve(async (req: Request) => {
           status: 'ACTIVE',
           support_level: support,
           resistance_level: resistance,
-          formula_version: 'baseline_v4',
+          formula_version: 'baseline_v5',
           engine_version: 'v1',
           evidence: { score, ...evidence },
           triggered_at: new Date().toISOString(),
