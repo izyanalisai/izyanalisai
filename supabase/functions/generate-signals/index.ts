@@ -173,12 +173,12 @@ Deno.serve(async (req: Request) => {
 
       let direction: 'BUY' | 'SELL' | null = null
       if (score >= 5) direction = 'BUY'
-      else if (score <= -5) direction = 'SELL'
+      // SELL dimatikan sementara (baseline_v3): diagnostik per-indikator
+      // menunjukkan semua sinyal bearish konsisten PF < 1.
+      // else if (score <= -5) direction = 'SELL'
 
-      // Filter tren: BUY hanya kalau harga di atas EMA50 (uptrend),
-      // SELL hanya kalau di bawah EMA50 (downtrend).
+      // Filter tren: BUY hanya kalau harga di atas EMA50 (uptrend).
       if (direction === 'BUY' && indicator.ema50 != null && lastCandle.close < indicator.ema50) direction = null
-      if (direction === 'SELL' && indicator.ema50 != null && lastCandle.close > indicator.ema50) direction = null
 
       if (!direction) { totalHold++; continue }
 
@@ -234,7 +234,7 @@ Deno.serve(async (req: Request) => {
           status: 'ACTIVE',
           support_level: support,
           resistance_level: resistance,
-          formula_version: 'baseline_v2',
+          formula_version: 'baseline_v3',
           engine_version: 'v1',
           evidence: { score, ...evidence },
           triggered_at: new Date().toISOString(),

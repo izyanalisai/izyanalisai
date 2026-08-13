@@ -11,7 +11,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 // Kalau generate-signals diubah, file ini harus diubah bersamaan lalu
 // dijalankan ulang dengan formula_version baru.
 
-const FORMULA_VERSION = 'baseline_v2'
+const FORMULA_VERSION = 'baseline_v3'
 const ATR_PERIOD = 14
 const SUPPORT_RESISTANCE_LOOKBACK = 20
 const MAX_HOLD_BARS = 20 // batas "1 bulan" untuk D1 (~20 hari bursa); trade yang belum kena TP/SL dianggap timeout, bukan win/loss
@@ -291,11 +291,13 @@ Deno.serve(async (req: Request) => {
 
       let direction: 'BUY' | 'SELL' | null = null
       if (score >= 5) direction = 'BUY'
-      else if (score <= -5) direction = 'SELL'
+      // SELL dimatikan sementara (baseline_v3): diagnostik per-indikator
+      // menunjukkan semua sinyal bearish konsisten PF < 1 (kalah lawan tren
+      // besar LQ45 2024-2026), sementara sinyal bullish sudah mendekati PF 1.
+      // else if (score <= -5) direction = 'SELL'
 
       // Filter tren -- WAJIB identik dengan generate-signals/index.ts
       if (direction === 'BUY' && ind.ema50 != null && lastCandle.close < ind.ema50) direction = null
-      if (direction === 'SELL' && ind.ema50 != null && lastCandle.close > ind.ema50) direction = null
 
       if (!direction) continue
 
