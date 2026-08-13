@@ -1,23 +1,28 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
 // Backfill satu kali: ambil sector/industry per saham dari Yahoo Finance
-// (module assetProfile, tidak bisa di-batch seperti quote, jadi per-ticker).
-const YAHOO_PROFILE_BASE = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary/'
-const CONCURRENCY = 10
-const BATCH_DELAY_MS = 400
+// pakai endpoint search (tidak butuh crumb, beda dari quoteSummary yang sering diblokir).
+const YAHOO_SEARCH_BASE = 'https://query2.finance.yahoo.com/v1/finance/search'
+const CONCURRENCY = 8
+const BATCH_DELAY_MS = 500
 
 type StockRow = { id: string; ticker: string }
 
-async function fetchSector(ticker: string) {
+async function fetchSector(ticker: string): Promise<{ sector: string | null; debug?: string }> {
   const res = await fetch(
-    `${YAHOO_PROFILE_BASE}${ticker}.JK?modules=assetProfile`,
+    `${YAHOO_SEARCH_BASE}?q=${ticker}.JK&quotesCount=1&newsCount=0`,
     { headers: { 'User-Agent': 'Mozilla/5.0' } },
   )
-  if (!res.ok) throw new Error(`${ticker}: HTTP ${res.status}`)
+  if (!res.ok) {
+    return { sector: null, debug: `HTTP ${res.status}` }
+  }
   const json = await res.json()
-  const profile = json?.quoteSummary?.result?.[0]?.assetProfile
-  const sector = profile?.sector ?? null
-  return sector as string | null
+  const quote = json?.quotes?.[0]
+  const sector = quote?.sector ?? quote?.sectorDisp ?? quote?.industry ?? quote?.industryDisp ?? null
+  if (!sector) {
+    return { sector: null, debug: `no sector field, quote keys: ${quote ? Object.keys(quote).join(',') : 'no quote'}` }
+  }
+  return { sector }
 }
 
 Deno.serve(async (_req: Request) => {
@@ -30,6 +35,7 @@ Deno.serve(async (_req: Request) => {
     .from('stocks')
     .select('id, ticker')
     .eq('is_active', true)
+    .limit(20) // DEBUG MODE: cuma 20 saham dulu buat cek endpointnya jalan atau nggak
 
   if (error || !stocks) {
     return new Response(
@@ -38,7 +44,6 @@ Deno.serve(async (_req: Request) => {
     )
   }
 
-  // Cache nama sektor -> id supaya tidak insert duplikat & tidak query berulang
   const sectorIdCache = new Map<string, string>()
   const { data: existingSectors } = await supabase.from('sectors').select('id, name')
   for (const s of existingSectors ?? []) sectorIdCache.set(s.name, s.id)
@@ -59,24 +64,29 @@ Deno.serve(async (_req: Request) => {
   let totalOk = 0
   let totalFailed = 0
   let totalNoSector = 0
+  const debugSamples: Record<string, string> = {}
 
   for (let i = 0; i < stocks.length; i += CONCURRENCY) {
     const batch = (stocks as StockRow[]).slice(i, i + CONCURRENCY)
     const results = await Promise.allSettled(
       batch.map(async (s) => {
-        const sector = await fetchSector(s.ticker)
-        return { stock: s, sector }
+        const { sector, debug } = await fetchSector(s.ticker)
+        return { stock: s, sector, debug }
       }),
     )
 
     for (const r of results) {
       if (r.status !== 'fulfilled') {
         totalFailed++
+        debugSamples[`error-${totalFailed}`] = String(r.reason)
         continue
       }
-      const { stock, sector } = r.value
+      const { stock, sector, debug } = r.value
       if (!sector) {
         totalNoSector++
+        if (debug && Object.keys(debugSamples).length < 5) {
+          debugSamples[stock.ticker] = debug
+        }
         continue
       }
       try {
@@ -88,8 +98,8 @@ Deno.serve(async (_req: Request) => {
         if (updErr) throw updErr
         totalOk++
       } catch (e) {
-        console.error(`update sector gagal untuk ${stock.ticker}`, e)
         totalFailed++
+        debugSamples[stock.ticker] = String(e)
       }
     }
 
@@ -105,6 +115,7 @@ Deno.serve(async (_req: Request) => {
       no_sector: totalNoSector,
       failed: totalFailed,
       sectors_created: sectorIdCache.size,
+      debug_samples: debugSamples,
     }),
     { headers: { 'Content-Type': 'application/json' } },
   )
