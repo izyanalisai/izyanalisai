@@ -175,6 +175,11 @@ Deno.serve(async (req: Request) => {
       if (score >= 5) direction = 'BUY'
       else if (score <= -5) direction = 'SELL'
 
+      // Filter tren: BUY hanya kalau harga di atas EMA50 (uptrend),
+      // SELL hanya kalau di bawah EMA50 (downtrend).
+      if (direction === 'BUY' && indicator.ema50 != null && lastCandle.close < indicator.ema50) direction = null
+      if (direction === 'SELL' && indicator.ema50 != null && lastCandle.close > indicator.ema50) direction = null
+
       if (!direction) { totalHold++; continue }
 
       const atr = computeATR(usableCandles)
@@ -229,7 +234,7 @@ Deno.serve(async (req: Request) => {
           status: 'ACTIVE',
           support_level: support,
           resistance_level: resistance,
-          formula_version: 'baseline_v1',
+          formula_version: 'baseline_v2',
           engine_version: 'v1',
           evidence: { score, ...evidence },
           triggered_at: new Date().toISOString(),
