@@ -160,6 +160,19 @@ export default function StockDetail({ ticker }: { ticker: string }) {
 
     let watchlistId = watchlists && watchlists.length > 0 ? watchlists[0].id : null
 
+    if (watchlistId) {
+      const { count } = await supabase
+        .from('watchlist_items')
+        .select('id', { count: 'exact', head: true })
+        .eq('watchlist_id', watchlistId)
+
+      if ((count ?? 0) >= 50) {
+        setWatchlistMsg('Folder watchlist sudah penuh (maksimal 50 saham).')
+        setWatchlistLoading(false)
+        return
+      }
+    }
+
     if (!watchlistId) {
       const { data: created, error: createError } = await supabase
         .from('watchlists')

@@ -1,17 +1,35 @@
 'use client'
 
 import { createClient } from '@/lib/supabase/client'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type { User } from '@supabase/supabase-js'
+
+const MAX_ITEMS_PER_FOLDER = 50
 
 type WatchlistFolder = { id: string; name: string }
 
 type WatchlistItem = {
   id: string
   stock_id: string
-  stocks: { ticker: string; name: string } | null
+  stocks: {
+    ticker: string
+    name: string
+    quotes: { price: number | null; previous_close: number | null } | null
+  } | null
+}
+
+type StockSearchResult = { id: string; ticker: string; name: string }
+
+function formatHarga(n: number | null) {
+  if (n === null || n === undefined) return '-'
+  return new Intl.NumberFormat('id-ID').format(n)
+}
+
+function pctChange(price: number | null, prev: number | null) {
+  if (price === null || prev === null || prev === 0) return null
+  return ((price - prev) / prev) * 100
 }
 
 export default function WatchlistPage() {
@@ -30,6 +48,11 @@ export default function WatchlistPage() {
   const [creating, setCreating] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
   const [folderMsg, setFolderMsg] = useState<string | null>(null)
+
+  const [addOpen, setAddOpen] = useState(false)
+  const [addQuery, setAddQuery] = useState('')
+  const [addResults, setAddResults] = useState<StockSearchResult[]>([])
+  const [addMsg, setAddMsg] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -67,29 +90,22 @@ export default function WatchlistPage() {
     run()
   }, [user, loadFolders])
 
+  const loadItems = useCallback(async (folderId: string) => {
+    setLoading(true)
+    const { data } = await supabase
+      .from('watchlist_items')
+      .select('id, stock_id, stocks ( ticker, name, quotes ( price, previous_close ) )')
+      .eq('watchlist_id', folderId)
+      .order('created_at', { ascending: false })
+
+    setItems((data as unknown as WatchlistItem[]) ?? [])
+    setLoading(false)
+  }, [])
+
   useEffect(() => {
     if (!activeFolderId) return
-    let active = true
-
-    async function loadItems() {
-      setLoading(true)
-      const { data } = await supabase
-        .from('watchlist_items')
-        .select('id, stock_id, stocks ( ticker, name )')
-        .eq('watchlist_id', activeFolderId)
-        .order('created_at', { ascending: false })
-
-      if (!active) return
-      setItems((data as unknown as WatchlistItem[]) ?? [])
-      setLoading(false)
-    }
-
-    loadItems()
-
-    return () => {
-      active = false
-    }
-  }, [activeFolderId])
+    loadItems(activeFolderId)
+  }, [activeFolderId, loadItems])
 
   const handleRemove = async (itemId: string) => {
     setRemovingId(itemId)
@@ -123,6 +139,55 @@ export default function WatchlistPage() {
     setFolderMsg(null)
   }
 
+  useEffect(() => {
+    if (!addOpen || addQuery.trim().length < 1) {
+      setAddResults([])
+      return
+    }
+    let active = true
+    const q = addQuery.toUpperCase()
+    supabase
+      .from('stocks')
+      .select('id, ticker, name')
+      .eq('is_active', true)
+      .or(`ticker.ilike.%${q}%,name.ilike.%${q}%`)
+      .limit(15)
+      .then(({ data }) => {
+        if (active) setAddResults(data ?? [])
+      })
+    return () => {
+      active = false
+    }
+  }, [addQuery, addOpen])
+
+  const existingStockIds = useMemo(() => new Set(items.map((i) => i.stock_id)), [items])
+
+  const handleAddStock = async (stock: StockSearchResult) => {
+    if (!activeFolderId) return
+    if (items.length >= MAX_ITEMS_PER_FOLDER) {
+      setAddMsg(`Maksimal ${MAX_ITEMS_PER_FOLDER} saham per folder.`)
+      return
+    }
+    if (existingStockIds.has(stock.id)) {
+      setAddMsg(`${stock.ticker} sudah ada di folder ini.`)
+      return
+    }
+
+    const { error } = await supabase
+      .from('watchlist_items')
+      .insert({ watchlist_id: activeFolderId, stock_id: stock.id })
+
+    if (error) {
+      setAddMsg('Gagal menambahkan saham.')
+      return
+    }
+
+    setAddMsg(null)
+    setAddQuery('')
+    setAddOpen(false)
+    loadItems(activeFolderId)
+  }
+
   if (!authChecked) {
     return (
       <main className="min-h-screen bg-[#0F172A] text-white px-4 py-6 max-w-[480px] mx-auto">
@@ -135,7 +200,24 @@ export default function WatchlistPage() {
 
   return (
     <main className="min-h-screen bg-[#0F172A] text-white px-4 py-6 max-w-[480px] mx-auto">
-      <h1 className="text-xl font-bold">Watchlist</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold">Watchlist</h1>
+        {activeFolderId && folders.length > 0 && (
+          <button
+            onClick={() => {
+              setAddOpen((v) => !v)
+              setAddMsg(null)
+            }}
+            className="text-xs font-medium text-white rounded-full px-3 py-1.5"
+            style={{
+              backgroundImage:
+                'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)',
+            }}
+          >
+            + Tambah Kode
+          </button>
+        )}
+      </div>
 
       <div className="mt-4 flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
         {folders.map((f) => {
@@ -197,6 +279,40 @@ export default function WatchlistPage() {
 
       {folderMsg && <p className="text-[#EF4444] text-xs mt-2">{folderMsg}</p>}
 
+      {addOpen && (
+        <div className="mt-3 rounded-xl bg-white/5 border border-white/10 p-3">
+          <input
+            autoFocus
+            type="text"
+            value={addQuery}
+            onChange={(e) => setAddQuery(e.target.value)}
+            placeholder="Cari kode atau nama saham"
+            className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm placeholder:text-slate-500 focus:outline-none focus:border-[#3B82F6]"
+          />
+          {addMsg && <p className="text-[#EF4444] text-xs mt-2">{addMsg}</p>}
+          <div className="mt-2 max-h-64 overflow-y-auto space-y-1">
+            {addResults.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => handleAddStock(s)}
+                className="w-full text-left flex items-center justify-between rounded-lg px-3 py-2 hover:bg-white/5"
+              >
+                <div>
+                  <p className="text-sm font-medium">{s.ticker}</p>
+                  <p className="text-slate-400 text-xs truncate">{s.name}</p>
+                </div>
+                {existingStockIds.has(s.id) && (
+                  <span className="text-slate-600 text-[11px]">Sudah ada</span>
+                )}
+              </button>
+            ))}
+            {addQuery.trim().length > 0 && addResults.length === 0 && (
+              <p className="text-slate-500 text-xs px-3 py-2">Saham tidak ditemukan.</p>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="mt-5 space-y-2">
         {loading && <p className="text-slate-500 text-sm">Memuat...</p>}
 
@@ -219,8 +335,8 @@ export default function WatchlistPage() {
         {!loading && folders.length > 0 && items.length === 0 && (
           <div className="rounded-xl bg-white/5 border border-white/10 px-4 py-8 text-center">
             <p className="text-slate-400 text-sm mb-3">Belum ada saham di folder ini</p>
-            <Link
-              href="/"
+            <button
+              onClick={() => setAddOpen(true)}
               className="inline-block text-xs font-medium text-white rounded-full px-4 py-2"
               style={{
                 backgroundImage:
@@ -228,29 +344,55 @@ export default function WatchlistPage() {
               }}
             >
               Cari Saham
-            </Link>
+            </button>
           </div>
         )}
 
+        {!loading && items.length > 0 && (
+          <p className="text-slate-600 text-[11px] text-right">
+            {items.length}/{MAX_ITEMS_PER_FOLDER} saham
+          </p>
+        )}
+
         {!loading &&
-          items.map((item) => (
-            <div
-              key={item.id}
-              className="flex items-center justify-between rounded-xl bg-white/5 border border-white/10 px-4 py-3"
-            >
-              <Link href={`/saham/${item.stocks?.ticker}`} className="flex-1 min-w-0">
-                <p className="font-semibold text-sm">{item.stocks?.ticker ?? '-'}</p>
-                <p className="text-slate-400 text-xs truncate">{item.stocks?.name ?? ''}</p>
-              </Link>
-              <button
-                onClick={() => handleRemove(item.id)}
-                disabled={removingId === item.id}
-                className="text-slate-500 hover:text-[#EF4444] transition-colors duration-200 text-xs font-medium px-2 py-1 disabled:opacity-50"
+          items.map((item) => {
+            const price = item.stocks?.quotes?.price ?? null
+            const prev = item.stocks?.quotes?.previous_close ?? null
+            const pct = pctChange(price, prev)
+            const up = pct !== null && pct >= 0
+
+            return (
+              <div
+                key={item.id}
+                className="flex items-center justify-between rounded-xl bg-white/5 border border-white/10 px-4 py-3"
               >
-                {removingId === item.id ? '...' : 'Hapus'}
-              </button>
-            </div>
-          ))}
+                <Link href={`/saham/${item.stocks?.ticker}`} className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm">{item.stocks?.ticker ?? '-'}</p>
+                  <p className="text-slate-400 text-xs truncate">{item.stocks?.name ?? ''}</p>
+                </Link>
+                <div className="flex items-center gap-3 shrink-0">
+                  {price !== null && (
+                    <div className="text-right">
+                      <p className="text-sm font-medium">{formatHarga(price)}</p>
+                      {pct !== null && (
+                        <p className={`text-xs ${up ? 'text-[#22C55E]' : 'text-[#EF4444]'}`}>
+                          {up ? '+' : ''}
+                          {pct.toFixed(2)}%
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => handleRemove(item.id)}
+                    disabled={removingId === item.id}
+                    className="text-slate-500 hover:text-[#EF4444] transition-colors duration-200 text-xs font-medium px-2 py-1 disabled:opacity-50"
+                  >
+                    {removingId === item.id ? '...' : 'Hapus'}
+                  </button>
+                </div>
+              </div>
+            )
+          })}
       </div>
     </main>
   )
