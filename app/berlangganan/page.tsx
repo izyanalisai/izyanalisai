@@ -26,7 +26,12 @@ const METHODS = [
   { key: 'SHOPEEPAY', label: 'ShopeePay' },
 ] as const
 
-const PREMIUM_PRICE = 99000 // TODO: pindahkan ke config/DB, jangan hardcode di frontend untuk produksi
+// PENTING: nilai ini HARUS SAMA PERSIS dengan PREMIUM_MONTHLY_PRICE_IDR
+// di supabase/functions/create-payment/index.ts. Backend itu yang jadi
+// sumber kebenaran harga (dipakai buat bikin transaksi Midtrans beneran),
+// angka di sini cuma buat ditampilkan sebelum user checkout.
+// Saat ini backend pakai Rp 49.000 — SESUAIKAN salah satu sisi sebelum go-live.
+const PREMIUM_PRICE = 49000
 
 const COMPARE_ROWS: [string, string, string][] = [
   ['Token AI per hari', '5', '50'],
@@ -113,31 +118,30 @@ export default function BerlanggananPage() {
     setSubmitting(true)
     setError(null)
 
-    // NOTE PRODUKSI: pembuatan payment "pending" ini hanya draft order.
-    // Aktivasi Premium TIDAK BOLEH terjadi dari sini. Subscription hanya
-    // boleh berubah status setelah verified webhook Midtrans masuk ke
-    // backend (lihat dokumen 7.5 & 13). Endpoint create-payment + webhook
-    // handler Midtrans belum dibuat — ini baru placeholder UI checkout.
-    const { data, error: insErr } = await supabase
-      .from('payments')
-      .insert({
-        user_id: user.id,
-        amount: PREMIUM_PRICE,
-        method,
-        status: 'pending',
-      })
-      .select('id')
-      .single()
+    // Sesuai dokumen 7.5 & 13: frontend TIDAK PERNAH insert langsung ke
+    // tabel payments atau mengaktifkan Premium sendiri. Frontend cuma minta
+    // backend (edge function create-payment) buat transaksi Midtrans.
+    // Status payments & subscriptions baru berubah setelah webhook Midtrans
+    // terverifikasi (lihat supabase/functions/midtrans-webhook).
+    const { data, error: fnError } = await supabase.functions.invoke('create-payment', {
+      body: { method, plan: 'premium_monthly' },
+    })
 
     setSubmitting(false)
-    if (insErr || !data) {
-      setError('Gagal membuat pesanan. Coba lagi.')
+
+    if (fnError || !data?.redirect_url) {
+      const detail = (data as { error?: string; detail?: unknown } | null)?.error
+      if (detail === 'MIDTRANS_NOT_CONFIGURED') {
+        setError('Pembayaran belum bisa diproses: server key Midtrans belum diisi admin.')
+      } else {
+        setError('Gagal membuat transaksi pembayaran. Coba lagi.')
+      }
       return
     }
 
-    alert(
-      'Integrasi Midtrans belum tersambung di backend, jadi pembayaran belum bisa diproses beneran. Order draft sudah tersimpan (status pending).'
-    )
+    // Redirect ke halaman pembayaran Midtrans Snap (QRIS/VA/e-wallet sesuai
+    // metode dipilih). Setelah user bayar, webhook yang mengaktifkan Premium.
+    window.location.href = data.redirect_url as string
   }
 
   if (loading) {
