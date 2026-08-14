@@ -319,4 +319,4 @@ export default function ProfilPage() {
       </div>
     </main>
   )
-}
+  }
