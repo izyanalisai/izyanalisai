@@ -224,15 +224,31 @@ export default function ProfilPage() {
             <span className="text-slate-600 text-xs">›</span>
           </a>
           <MenuLink label="Bahasa" hint="Indonesia" />
-          <MenuLink label="Dukungan" />
-          <MenuLink label="Ajukan Fitur" />
-          <MenuLink label="Laporkan Bug" />
-          <MenuLink label="Legal" />
+          <MenuLink label="Dukungan" href="/dukungan" />
+          <MenuLink label="Ajukan Fitur" href="/ajukan-fitur" />
+          <MenuLink label="Laporkan Bug" href="/laporkan-bug" />
+          <MenuLink label="Beri Nilai" href="/beri-nilai" />
+          <MenuLink label="Legal" href="/legal" />
+          <MenuLink label="Hapus Akun" href="/hapus-akun" />
         </div>
 
         <button
+          onClick={() => {
+            if (navigator.share) {
+              navigator.share({ title: 'IzyAnalisAi', text: 'Analisa saham IDX berbasis AI', url: window.location.origin })
+            } else {
+              navigator.clipboard.writeText(window.location.origin)
+              alert('Link aplikasi disalin!')
+            }
+          }}
+          className="w-full mt-5 rounded-xl border border-white/10 px-4 py-3 text-sm font-medium text-slate-200"
+        >
+          Bagikan Aplikasi
+        </button>
+
+        <button
           onClick={handleLogout}
-          className="w-full mt-5 rounded-xl border border-white/10 px-4 py-3 text-sm font-medium text-[#EF4444]"
+          className="w-full mt-3 rounded-xl border border-white/10 px-4 py-3 text-sm font-medium text-[#EF4444]"
         >
           Keluar
         </button>
