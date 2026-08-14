@@ -18,7 +18,7 @@ type StockRow = {
 
 type SignalRow = {
   id: string
-  direction: 'BUY' | 'SELL' | 'HOLD'
+  direction: 'BUY' | 'SELL'
   confidence_score: number | null
   timeframe: string | null
   created_at: string
@@ -95,7 +95,6 @@ function formatCountdown(totalMinutes: number) {
 const directionStyle: Record<string, { text: string; bg: string }> = {
   BUY: { text: 'text-[#22C55E]', bg: 'bg-[#22C55E]/15' },
   SELL: { text: 'text-[#EF4444]', bg: 'bg-[#EF4444]/15' },
-  HOLD: { text: 'text-slate-300', bg: 'bg-white/10' },
 }
 
 export default function Home() {
@@ -115,6 +114,15 @@ export default function Home() {
 
   const [now, setNow] = useState<Date | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // Dokumen 4.1: setiap buka app pertama kali dalam sesi browser, gerbang
+  // lewat Splash dulu (yang lalu redirect ke Onboarding/Landing/Home sesuai
+  // status). Setelah itu (dalam sesi yang sama) tidak diulang lagi.
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !sessionStorage.getItem('izy_splash_shown')) {
+      router.replace('/splash')
+    }
+  }, [router])
 
   useEffect(() => {
     const tick = () => {
@@ -356,7 +364,7 @@ export default function Home() {
         )}
         <div className="space-y-2">
           {signals.map((s) => {
-            const style = directionStyle[s.direction] ?? directionStyle.HOLD
+            const style = directionStyle[s.direction] ?? directionStyle.SELL
             return (
               <Link
                 key={s.id}
@@ -472,4 +480,4 @@ export default function Home() {
       </section>
     </main>
   )
-}
+                                      }
