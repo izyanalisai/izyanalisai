@@ -1,8 +1,18 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* Dark mode (default) — dokumen 3.1 Primary Multi-Color Gradient */
+:root,
+html.dark {
+  --background: #0F172A;
+  --foreground: #ffffff;
+  --gradient-bg: linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%);
+}
+
+/* Light mode — dokumen 3.1 Light Mode Gradient */
+html.light {
+  --background: #F5F0FF;
+  --foreground: #1A1025;
+  --gradient-bg: linear-gradient(135deg, #F5F0FF 0%, #FAF8FF 50%, #F3F4F6 100%);
 }
 
 @theme inline {
@@ -12,17 +22,11 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  transition: background-color 300ms ease-out, color 300ms ease-out;
 }
 
 @keyframes gradient-flow {
@@ -32,7 +36,21 @@ body {
 }
 
 .animate-gradient-flow {
-  background-image: linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%);
+  background-image: var(--gradient-bg);
   background-size: 300% 300%;
   animation: gradient-flow 13s ease-in-out infinite alternate;
+}
+
+/* Dokumen 3.6: Aksesibilitas — Reduced Motion Wajib.
+   Kalau user aktifkan "Reduce Motion" di OS, semua animasi dimatikan
+   atau diganti fade sederhana (durasi 0.01ms). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
