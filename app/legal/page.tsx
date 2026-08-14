@@ -71,7 +71,7 @@ function SectionBody({ section }: { section: SectionKey }) {
       return (
         <div className="space-y-2 text-sm text-slate-300 leading-relaxed">
           <p>
-            <strong>DYOR — Do Your Own Research.</strong> Sinyal AI (BUY/SELL/HOLD), Entry,
+            <strong>DYOR — Do Your Own Research.</strong> Sinyal AI (BUY/SELL), Entry,
             Target, dan Stop Loss dihasilkan dari perhitungan sistem berbasis data historis.
             Ini <strong>bukan jaminan profit</strong> dan bukan rekomendasi investasi resmi.
           </p>
@@ -121,7 +121,7 @@ function SectionBody({ section }: { section: SectionKey }) {
             investasi.
           </p>
           <p>
-            Sinyal BUY/SELL/HOLD, Entry, Target, dan Stop Loss yang ditampilkan adalah hasil
+            Sinyal BUY/SELL, Entry, Target, dan Stop Loss yang ditampilkan adalah hasil
             perhitungan sistem berbasis data historis untuk tujuan analisa dan edukasi, dan{' '}
             <strong>bukan ajakan, penawaran, atau rekomendasi resmi</strong> untuk membeli
             atau menjual efek tertentu.
