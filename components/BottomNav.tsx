@@ -100,6 +100,7 @@ const HIDDEN_PREFIXES = [
   ...NO_SHELL_PREFIXES,
   '/saham/', '/notifikasi', '/kalender', '/berita', '/riwayat-sinyal',
   '/trading-plan', '/chat', '/berlangganan',
+  '/hapus-akun', '/legal', '/dukungan', '/ajukan-fitur', '/laporkan-bug',
 ]
 
 export default function BottomNav() {

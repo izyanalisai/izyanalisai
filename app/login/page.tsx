@@ -2,7 +2,7 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { getPostLoginPath } from '@/lib/auth-flow'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -10,6 +10,14 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
+  const [accountDeletedNotice, setAccountDeletedNotice] = useState(false)
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('accountDeleted') === '1') {
+      setAccountDeletedNotice(true)
+    }
+  }, [])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -48,6 +56,15 @@ export default function LoginPage() {
       >
         Masuk
       </h1>
+
+      {accountDeletedNotice && (
+        <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 mb-4">
+          <p className="text-sm text-[#EF4444]">
+            Akun ini sudah dalam proses penghapusan. Masih dalam masa pemulihan 30 hari —
+            hubungi Dukungan lewat WhatsApp kalau kamu ingin membatalkannya.
+          </p>
+        </div>
+      )}
 
       <form onSubmit={handleLogin} className="space-y-4">
         <input

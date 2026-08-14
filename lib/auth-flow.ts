@@ -8,6 +8,19 @@ export async function getPostLoginPath(
   supabase: SupabaseClient,
   userId: string
 ): Promise<string> {
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('risk_profile, deleted_at')
+    .eq('id', userId)
+    .maybeSingle()
+
+  // Akun yang sudah minta hapus akun tidak boleh dipakai login lagi,
+  // meski masih dalam masa pemulihan 30 hari.
+  if (profile?.deleted_at) {
+    await supabase.auth.signOut()
+    return '/login?accountDeleted=1'
+  }
+
   const { data: agreement } = await supabase
     .from('agreements')
     .select('id')
@@ -26,12 +39,6 @@ export async function getPostLoginPath(
 
     if (!acceptance) return '/agreement'
   }
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('risk_profile')
-    .eq('id', userId)
-    .maybeSingle()
 
   if (!profile?.risk_profile) return '/profil-risiko'
 
