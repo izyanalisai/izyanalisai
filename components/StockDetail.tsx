@@ -25,7 +25,7 @@ type Quote = {
 
 type SignalRpcResult = {
   id: string
-  direction: 'BUY' | 'SELL' | 'HOLD'
+  direction: 'BUY' | 'SELL'
   status: string
   created_at: string
   unlocked: boolean
@@ -47,7 +47,6 @@ type Wallet = {
 const directionStyle: Record<string, { bg: string; text: string; label: string }> = {
   BUY: { bg: 'bg-[#22C55E]/15', text: 'text-[#22C55E]', label: 'BUY' },
   SELL: { bg: 'bg-[#EF4444]/15', text: 'text-[#EF4444]', label: 'SELL' },
-  HOLD: { bg: 'bg-white/10', text: 'text-slate-300', label: 'HOLD' },
 }
 
 function formatHarga(n: number | null | undefined) {
