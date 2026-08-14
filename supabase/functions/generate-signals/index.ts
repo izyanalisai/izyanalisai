@@ -175,10 +175,6 @@ Deno.serve(async (req: Request) => {
     const results = await Promise.allSettled(
       batch.map(async (s) => {
         const [{ data: candlesDesc, error: cErr }, { data: indRows, error: iErr }] = await Promise.all([
-          // Ambil 60 candle TERBARU: order descending + limit, baru di-reverse jadi
-          // ascending. Sebelumnya order ascending + limit(60) malah mengambil 60
-          // candle TERLAMA sejak data pertama masuk, jadi sinyal tidak pernah
-          // memakai harga terkini begitu histori > 60 hari.
           supabase.from('candles').select('ts, open, high, low, close, volume')
             .eq('stock_id', s.id).eq('timeframe', timeframe)
             .order('ts', { ascending: false }).limit(60),
@@ -200,10 +196,6 @@ Deno.serve(async (req: Request) => {
       }
       const { stock, candles, indicator } = r.value
 
-      // Untuk D1/W1, candle terakhir bisa masih "live" (hari/minggu berjalan,
-      // belum closed) dan closenya berubah tiap kali fetch-candles jalan ulang.
-      // Basis entry harus dari candle yang sudah final, biar TP/SL yang sudah
-      // di-generate tidak jadi basi begitu candle live ke-upsert dengan harga baru.
       let usableCandles = candles
       if ((timeframe === 'D1' || timeframe === 'W1') && usableCandles.length > 0) {
         const last = usableCandles[usableCandles.length - 1]
@@ -223,11 +215,7 @@ Deno.serve(async (req: Request) => {
 
       let direction: 'BUY' | 'SELL' | null = null
       if (score >= 5) direction = 'BUY'
-      // SELL dimatikan sementara (baseline_v3): diagnostik per-indikator
-      // menunjukkan semua sinyal bearish konsisten PF < 1.
-      // else if (score <= -5) direction = 'SELL'
 
-      // Filter tren: BUY hanya kalau harga di atas EMA50 (uptrend).
       if (direction === 'BUY' && indicator.ema50 != null && lastCandle.close < indicator.ema50) direction = null
 
       if (!direction) { totalHold++; continue }
@@ -242,10 +230,6 @@ Deno.serve(async (req: Request) => {
 
       let buyAreaLow: number, buyAreaHigh: number, stopLoss: number, tp1: number, tp2: number
 
-      // SL/TP dilebarin (v6): SL 1.5xATR & TP1 1.5R konsisten breakeven ~40%
-      // win rate di semua formula_version sebelumnya -- indikasi jarak SL/TP
-      // kekecilan dibanding noise harian saham IDX, kena stop out random
-      // sebelum tren "beneran" kebentuk.
       if (direction === 'BUY') {
         buyAreaLow = support
         buyAreaHigh = entry
