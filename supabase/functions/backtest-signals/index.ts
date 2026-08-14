@@ -6,19 +6,15 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 //  Max Drawdown <=25% dalam 1 bulan."
 //
 // PENTING: logic scoring & formula Entry/SL/TP di file ini WAJIB identik
-// dengan supabase/functions/generate-signals/index.ts -- backtest yang
-// menguji formula berbeda dari yang jalan di produksi tidak valid.
-// Kalau generate-signals diubah, file ini harus diubah bersamaan lalu
-// dijalankan ulang dengan formula_version baru.
+// dengan supabase/functions/generate-signals/index.ts.
 
-const FORMULA_VERSION = 'baseline_v6'
+const FORMULA_VERSION = 'baseline_v7'
 const ATR_PERIOD = 14
 const SUPPORT_RESISTANCE_LOOKBACK = 20
-const MAX_HOLD_BARS = 20 // batas "1 bulan" untuk D1 (~20 hari bursa); trade yang belum kena TP/SL dianggap timeout, bukan win/loss
-const FEE_SLIPPAGE_PCT = 0.0025 // asumsi 0.25% round-trip (fee beli+jual+slippage), dikurangkan dari tiap hasil trade
-const FIXED_RISK_PCT = 0.01 // risiko 1% modal per trade untuk simulasi equity curve (position sizing tetap, bukan all-in)
+const MAX_HOLD_BARS = 20
+const FEE_SLIPPAGE_PCT = 0.0025
+const FIXED_RISK_PCT = 0.01
 
-// LQ45 periode 3 Agustus - 30 Oktober 2026 (sumber: pengumuman BEI 27/7/2026)
 const LQ45_TICKERS = [
   'AADI','ADMR','ADRO','AKRA','AMMN','AMRT','ANTM','ASII','BBCA','BBNI',
   'BBRI','BBTN','BMRI','BRPT','BUMI','CPIN','CUAN','DEWA','EMTK','ESSA',
@@ -33,8 +29,6 @@ type IndicatorPoint = {
   rsi14: number | null; macd_line: number | null; macd_signal: number | null
   stoch_k: number | null; stoch_d: number | null; volume_avg20: number | null
 }
-
-// ---- Sama persis dengan generate-signals/index.ts ----
 
 function ema(values: number[], period: number): (number | null)[] {
   const result: (number | null)[] = new Array(values.length).fill(null)
@@ -119,15 +113,29 @@ function computeATR(candles: CandleRow[], period = ATR_PERIOD): number | null {
   return lastN.reduce((a, b) => a + b, 0) / lastN.length
 }
 
-function scoreSignal(ind: IndicatorPoint, lastCandle: CandleRow, prevClose: number) {
-  // v5: confluence-based -- WAJIB identik dengan generate-signals/index.ts
-  const rsiBullish = ind.rsi14 != null && ind.rsi14 > 55
+function scoreSignal(ind: IndicatorPoint, candles: CandleRow[], barIdx: number) {
+  const lastCandle = candles[barIdx]
+  const prevClose = candles[barIdx - 1].close
+
+  const rsiBullish = ind.rsi14 != null && ind.rsi14 > 55 && ind.rsi14 < 70
   const rsiBearish = ind.rsi14 != null && ind.rsi14 < 45
   const macdBullish = ind.macd_line != null && ind.macd_signal != null && ind.macd_line > ind.macd_signal
   const macdBearish = ind.macd_line != null && ind.macd_signal != null && ind.macd_line < ind.macd_signal
 
-  const confluenceBuy = rsiBullish && macdBullish
-  const confluenceSell = rsiBearish && macdBearish
+  const closesUpToBar = candles.slice(0, barIdx + 1).map((c) => c.close)
+  const ema21Series = ema(closesUpToBar, 21)
+  const lastIdx = ema21Series.length - 1
+  const slopeLookback = 5
+  const ema21Now = ema21Series[lastIdx]
+  const ema21Before = lastIdx - slopeLookback >= 0 ? ema21Series[lastIdx - slopeLookback] : null
+  const trendUp = ema21Now != null && ema21Before != null && ema21Now > ema21Before
+  const trendDown = ema21Now != null && ema21Before != null && ema21Now < ema21Before
+
+  const stochOverbought = ind.stoch_k != null && ind.stoch_k >= 80
+  const stochOversold = ind.stoch_k != null && ind.stoch_k <= 20
+
+  const confluenceBuy = rsiBullish && macdBullish && trendUp && !stochOverbought
+  const confluenceSell = rsiBearish && macdBearish && trendDown && !stochOversold
   if (!confluenceBuy && !confluenceSell) return 0
 
   let score = confluenceBuy ? 5 : -5
@@ -146,8 +154,6 @@ function scoreSignal(ind: IndicatorPoint, lastCandle: CandleRow, prevClose: numb
   return score
 }
 
-// ---- Khusus backtest: simulasi trade dari titik entry historis ----
-
 type Trade = {
   ticker: string
   direction: 'BUY' | 'SELL'
@@ -157,9 +163,9 @@ type Trade = {
   tp1: number
   outcome: 'WIN' | 'LOSS' | 'TIMEOUT'
   pnl_pct: number
-  risk_pct: number // jarak entry ke stop_loss dalam persen harga, dipakai buat normalisasi equity curve
+  risk_pct: number
   bars_held: number
-  score: number // |skor| saat sinyal dibuat, dipakai buat breakdown Win Rate per level skor (evidence-based, bukan tebakan)
+  score: number
 }
 
 function simulateTrade(
@@ -176,7 +182,6 @@ function simulateTrade(
   for (let i = entryIdx + 1; i <= Math.min(entryIdx + MAX_HOLD_BARS, candles.length - 1); i++) {
     const bar = candles[i]
     if (direction === 'BUY') {
-      // Konservatif: kalau SL & TP1 sama-sama kesentuh di bar yang sama, anggap SL duluan (worst case)
       if (bar.low <= stopLoss) {
         const pnl = (stopLoss - entry) / entry - FEE_SLIPPAGE_PCT
         return { ticker, direction, entry_ts: candles[entryIdx].ts, entry, stop_loss: stopLoss, tp1, outcome: 'LOSS', pnl_pct: pnl, risk_pct: riskPct, bars_held: i - entryIdx, score: scoreAbs }
@@ -240,11 +245,6 @@ Deno.serve(async (req: Request) => {
     const candles = candleRows as CandleRow[]
     const closes = candles.map((c) => c.close)
 
-    // Lacak rentang tanggal langsung dari data yang sudah kita fetch, bukan
-    // query terpisah ke DB di akhir -- query "order by ts limit 1" tanpa
-    // filter stock_id itu sort atas ratusan ribu baris candles dan bisa
-    // kena statement timeout, yang sebelumnya menggagalkan insert hasil
-    // backtest walau proses intinya sendiri sudah selesai.
     const first = candles[0].ts
     const last = candles[candles.length - 1].ts
     if (earliestTs === null || first < earliestTs) earliestTs = first
@@ -260,10 +260,8 @@ Deno.serve(async (req: Request) => {
       volAvg20[i] = window.reduce((a, b) => a + b, 0) / 20
     }
 
-    // Mulai dari bar ke-60 (butuh histori cukup untuk EMA50/MACD/ATR), sisakan
-    // ruang di akhir untuk MAX_HOLD_BARS supaya outcome trade bisa diukur.
     const startIdx = 60
-    const endIdx = candles.length - 1 // minimal 1 bar ke depan untuk evaluasi TP/SL
+    const endIdx = candles.length - 1
 
     for (let i = startIdx; i < endIdx; i++) {
       const ind: IndicatorPoint = {
@@ -272,17 +270,11 @@ Deno.serve(async (req: Request) => {
         stoch_k: stochK[i], stoch_d: stochD[i], volume_avg20: volAvg20[i],
       }
       const lastCandle = candles[i]
-      const prevClose = candles[i - 1].close
-      const score = scoreSignal(ind, lastCandle, prevClose)
+      const score = scoreSignal(ind, candles, i)
 
       let direction: 'BUY' | 'SELL' | null = null
       if (score >= 5) direction = 'BUY'
-      // SELL dimatikan sementara (baseline_v3): diagnostik per-indikator
-      // menunjukkan semua sinyal bearish konsisten PF < 1 (kalah lawan tren
-      // besar LQ45 2024-2026), sementara sinyal bullish sudah mendekati PF 1.
-      // else if (score <= -5) direction = 'SELL'
 
-      // Filter tren -- WAJIB identik dengan generate-signals/index.ts
       if (direction === 'BUY' && ind.ema50 != null && lastCandle.close < ind.ema50) direction = null
 
       if (!direction) continue
@@ -291,15 +283,9 @@ Deno.serve(async (req: Request) => {
       const atr = computeATR(atrWindow)
       if (atr == null) continue
 
-      // Entry = close bar sinyal itu sendiri, PERSIS seperti generate-signals/index.ts
-      // (entry: lastCandle.close). Wajib identik dengan produksi -- kalau backtest
-      // menguji formula entry yang beda (mis. open bar besok), hasil Win Rate/Profit
-      // Factor tidak lagi memvalidasi strategi yang benar-benar jalan di produksi.
       const entryIdx = i
       const entry = candles[entryIdx].close
-      const recent = candles.slice(Math.max(0, i - SUPPORT_RESISTANCE_LOOKBACK + 1), i + 1)
 
-      // SL/TP dilebarin (v6) -- WAJIB identik dengan generate-signals/index.ts
       let stopLoss: number, tp1: number
       if (direction === 'BUY') {
         stopLoss = entry - 2 * atr
@@ -314,9 +300,6 @@ Deno.serve(async (req: Request) => {
       const trade = simulateTrade(stock.ticker, direction, entryIdx, candles, entry, stopLoss, tp1, Math.abs(score))
       allTrades.push(trade)
 
-      // Skip beberapa bar ke depan sesuai bar yang sudah "dipakai" trade ini,
-      // supaya tidak menghitung sinyal-sinyal yang overlap dengan posisi yang
-      // masih terbuka pada saham yang sama (over-counting).
       i += trade.bars_held
     }
   }
@@ -324,21 +307,13 @@ Deno.serve(async (req: Request) => {
   const wins = allTrades.filter((t) => t.outcome === 'WIN')
   const losses = allTrades.filter((t) => t.outcome === 'LOSS')
   const timeouts = allTrades.filter((t) => t.outcome === 'TIMEOUT')
-  const closedTrades = wins.length + losses.length // timeout tidak dihitung ke win rate (belum ada hasil pasti)
+  const closedTrades = wins.length + losses.length
 
   const winRate = closedTrades > 0 ? (wins.length / closedTrades) * 100 : 0
   const grossProfit = wins.reduce((sum, t) => sum + t.pnl_pct, 0)
   const grossLoss = Math.abs(losses.reduce((sum, t) => sum + t.pnl_pct, 0))
   const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : null
 
-  // Max drawdown: equity curve dengan position sizing TETAP (risiko FIXED_RISK_PCT
-  // dari modal per trade), bukan all-in 100% modal tiap trade. Sebelumnya equity
-  // di-compound penuh per trade (equity *= 1 + pnl_pct) seolah satu strategi pakai
-  // seluruh modal berturut-turut di 45 saham berbeda -- dengan profit factor < 1,
-  // itu bikin equity ambruk ke ~0 secara matematis dan Max Drawdown selalu ~100%,
-  // bukan mencerminkan portofolio nyata yang membagi modal ke banyak posisi.
-  // r_multiple = pnl_pct / risk_pct (kelipatan risiko yang di-set di stop loss),
-  // lalu equity berubah sebesar FIXED_RISK_PCT * r_multiple per trade.
   const sortedClosed = [...wins, ...losses].sort((a, b) => a.entry_ts.localeCompare(b.entry_ts))
   let equity = 1, peak = 1, maxDD = 0
   for (const t of sortedClosed) {
@@ -350,11 +325,6 @@ Deno.serve(async (req: Request) => {
   }
   const maxDrawdownPct = maxDD * 100
 
-  // Breakdown Win Rate per level |skor| (5,6,7,...,10) -- diagnostik evidence-based
-  // supaya keputusan naikkan threshold atau ubah bobot indikator didasari data
-  // backtest asli, bukan tebakan. Skor makin ekstrem seharusnya makin akurat kalau
-  // sinyalnya memang informatif; kalau flat/acak di semua level, berarti masalahnya
-  // bukan di threshold tapi di indikator/bobotnya sendiri.
   const scoreBreakdown: Record<string, { trades: number; wins: number; losses: number; win_rate_pct: number }> = {}
   for (const t of [...wins, ...losses]) {
     const key = String(t.score)
