@@ -1,4 +1,3 @@
-
 'use client'
 
 import { createClient } from '@/lib/supabase/client'
@@ -7,11 +6,20 @@ import Link from 'next/link'
 
 type SignalRow = {
   id: string
-  direction: 'BUY' | 'SELL' | HOLD'
+  direction: 'BUY' | 'SELL'
+  status: 'ACTIVE' | 'HIT_TP1'
   created_at: string
   stock_id: string
   ticker: string
   name: string
+  entry_price: number | null
+  buy_area_low: number | null
+  buy_area_high: number | null
+  tp1: number | null
+  tp2: number | null
+  stop_loss: number | null
+  confidence_score: number | null
+  current_price: number | null
 }
 
 type FilterValue = 'ALL' | 'BUY' | 'SELL'
@@ -19,7 +27,6 @@ type FilterValue = 'ALL' | 'BUY' | 'SELL'
 const directionStyle: Record<string, { bg: string; text: string }> = {
   BUY: { bg: 'bg-[#22C55E]/15', text: 'text-[#22C55E]' },
   SELL: { bg: 'bg-[#EF4444]/15', text: 'text-[#EF4444]' },
-  HOLD: { bg: 'bg-white/10', text: 'text-slate-300' },
 }
 
 const FILTERS: { value: FilterValue; label: string }[] = [
@@ -28,6 +35,43 @@ const FILTERS: { value: FilterValue; label: string }[] = [
   { value: 'SELL', label: 'SELL' },
 ]
 
+function formatHarga(n: number | null | undefined) {
+  if (n === null || n === undefined) return '-'
+  return new Intl.NumberFormat('id-ID').format(n)
+}
+
+// Dokumen 6.4 Progress Bar: ACTIVE menunjukkan posisi harga terkini di
+// antara entry dan TP/SL; HIT_TP1 bar hijau sampai TP1.
+function computeProgress(s: SignalRow): { pct: number; color: string } {
+  if (s.status === 'HIT_TP1') return { pct: 100, color: '#22C55E' }
+
+  const { entry_price, tp1, stop_loss, current_price, direction } = s
+  if (entry_price == null || tp1 == null || stop_loss == null || current_price == null) {
+    return { pct: 0, color: '#64748B' }
+  }
+
+  if (direction === 'BUY') {
+    if (current_price <= stop_loss) return { pct: 100, color: '#EF4444' }
+    if (current_price >= tp1) return { pct: 100, color: '#22C55E' }
+    if (current_price >= entry_price) {
+      const pct = ((current_price - entry_price) / (tp1 - entry_price)) * 100
+      return { pct: Math.max(0, Math.min(100, pct)), color: '#22C55E' }
+    }
+    const pct = ((entry_price - current_price) / (entry_price - stop_loss)) * 100
+    return { pct: Math.max(0, Math.min(100, pct)), color: '#EF4444' }
+  }
+
+  // SELL: arah kebalikan
+  if (current_price >= stop_loss) return { pct: 100, color: '#EF4444' }
+  if (current_price <= tp1) return { pct: 100, color: '#22C55E' }
+  if (current_price <= entry_price) {
+    const pct = ((entry_price - current_price) / (entry_price - tp1)) * 100
+    return { pct: Math.max(0, Math.min(100, pct)), color: '#22C55E' }
+  }
+  const pct = ((current_price - entry_price) / (stop_loss - entry_price)) * 100
+  return { pct: Math.max(0, Math.min(100, pct)), color: '#EF4444' }
+}
+
 export default function SignalPage() {
   const supabase = createClient()
 
@@ -35,16 +79,36 @@ export default function SignalPage() {
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<FilterValue>('ALL')
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set())
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [userId, setUserId] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
 
     async function load() {
-      const { data } = await supabase.rpc('list_active_signals')
+      const { data: userData } = await supabase.auth.getUser()
+      if (active) setUserId(userData.user?.id ?? null)
 
+      const { data } = await supabase.rpc('list_active_signals')
       if (!active) return
       setSignals((data as SignalRow[]) ?? [])
       setLoading(false)
+
+      if (userData.user) {
+        const { data: saved } = await supabase
+          .from('saved_signals')
+          .select('signal_snapshot')
+          .eq('user_id', userData.user.id)
+        if (active && saved) {
+          const ids = new Set(
+            saved
+              .map((row) => (row.signal_snapshot as { id?: string })?.id)
+              .filter((id): id is string => Boolean(id))
+          )
+          setSavedIds(ids)
+        }
+      }
     }
 
     load()
@@ -70,6 +134,36 @@ export default function SignalPage() {
 
     return list
   }, [signals, query, filter])
+
+  async function handleBookmark(s: SignalRow) {
+    if (!userId) return
+    if (savedIds.has(s.id)) return // sudah tersimpan, snapshot bersifat immutable
+
+    await supabase.from('saved_signals').insert({
+      user_id: userId,
+      signal_snapshot: s,
+    })
+    setSavedIds((prev) => new Set(prev).add(s.id))
+  }
+
+  function handleCopy(s: SignalRow) {
+    const text = [
+      `${s.ticker} - ${s.direction}`,
+      s.buy_area_low != null && s.buy_area_high != null
+        ? `Buy Area: ${formatHarga(s.buy_area_low)} - ${formatHarga(s.buy_area_high)}`
+        : null,
+      s.tp1 != null ? `TP1: ${formatHarga(s.tp1)}` : null,
+      s.tp2 != null ? `TP2: ${formatHarga(s.tp2)}` : null,
+      s.stop_loss != null ? `Stop Loss: ${formatHarga(s.stop_loss)}` : null,
+      'DYOR - bukan jaminan profit.',
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    navigator.clipboard?.writeText(text)
+    setCopiedId(s.id)
+    setTimeout(() => setCopiedId((id) => (id === s.id ? null : id)), 1500)
+  }
 
   return (
     <main className="min-h-screen bg-[#0F172A] text-white px-4 py-6 max-w-[480px] mx-auto">
@@ -116,7 +210,7 @@ export default function SignalPage() {
         })}
       </div>
 
-      <div className="mt-5 space-y-2">
+      <div className="mt-5 space-y-3">
         {loading && (
           <p className="text-slate-500 text-sm">
             Memuat...
@@ -132,39 +226,64 @@ export default function SignalPage() {
         {!loading &&
           filtered.map((s) => {
             const dir = directionStyle[s.direction]
+            const progress = computeProgress(s)
+            const isSaved = savedIds.has(s.id)
 
             return (
-              <Link
+              <div
                 key={s.id}
-                href={`/saham/${s.ticker}`}
-                className="block rounded-xl bg-white/5 border border-white/10 px-4 py-3 hover:border-[#8B5CF6] transition-colors duration-200"
+                className="rounded-xl bg-white/5 border border-white/10 px-4 py-3 hover:border-[#8B5CF6] transition-colors duration-200"
               >
-                <div className="flex items-center justify-between">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-sm">
-                      {s.ticker}
-                    </p>
+                <Link href={`/saham/${s.ticker}`} className="block">
+                  <div className="flex items-center justify-between">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-sm">{s.ticker}</p>
+                      <p className="text-slate-400 text-xs truncate">{s.name}</p>
+                    </div>
 
-                    <p className="text-slate-400 text-xs truncate">
-                      {s.name}
-                    </p>
+                    <span
+                      className={`shrink-0 text-xs font-bold px-3 py-1 rounded-full ml-2 ${dir.bg} ${dir.text}`}
+                    >
+                      {s.direction}
+                    </span>
                   </div>
 
-                  <span
-                    className={`shrink-0 text-xs font-bold px-3 py-1 rounded-full ml-2 ${dir.bg} ${dir.text}`}
-                  >
-                    {s.direction}
-                  </span>
-                </div>
+                  {/* Progress Bar — dokumen 6.4 */}
+                  <div className="mt-3 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none"
+                      style={{ width: `${progress.pct}%`, backgroundColor: progress.color }}
+                    />
+                  </div>
 
-                <p className="text-slate-500 text-xs mt-2">
-                  Buy Area, TP, SL & Confidence — buka di Detail Saham
-                </p>
-              </Link>
+                  <p className="text-slate-500 text-xs mt-2">
+                    Buy Area, TP, SL & Confidence — buka di Detail Saham
+                  </p>
+                </Link>
+
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={() => handleCopy(s)}
+                    className="flex-1 rounded-lg border border-white/10 py-1.5 text-xs text-slate-300 hover:border-[#3B82F6] transition-colors duration-200"
+                  >
+                    {copiedId === s.id ? 'Tersalin ✓' : 'Copy'}
+                  </button>
+                  <button
+                    onClick={() => handleBookmark(s)}
+                    disabled={!userId}
+                    className={`flex-1 rounded-lg border py-1.5 text-xs transition-colors duration-200 disabled:opacity-40 ${
+                      isSaved
+                        ? 'border-[#8B5CF6] text-[#8B5CF6] bg-[#8B5CF6]/10'
+                        : 'border-white/10 text-slate-300 hover:border-[#8B5CF6]'
+                    }`}
+                  >
+                    {isSaved ? 'Tersimpan ✓' : 'Bookmark'}
+                  </button>
+                </div>
+              </div>
             )
           })}
       </div>
     </main>
   )
-}
-
+  }
