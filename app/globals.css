@@ -1,48 +1,56 @@
-import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
-import Header from "@/components/Header";
-import BottomNav from "@/components/BottomNav";
-import { ThemeProvider, LanguageProvider } from "@/lib/preferences";
+@import "tailwindcss";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
+/* Dark mode (default) — dokumen 3.1 Primary Multi-Color Gradient */
+:root,
+html.dark {
+  --background: #0F172A;
+  --foreground: #ffffff;
+  --gradient-bg: linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%);
+}
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+/* Light mode — dokumen 3.1 Light Mode Gradient */
+html.light {
+  --background: #F5F0FF;
+  --foreground: #1A1025;
+  --gradient-bg: linear-gradient(135deg, #F5F0FF 0%, #FAF8FF 50%, #F3F4F6 100%);
+}
 
-export const metadata: Metadata = {
-  title: "IzyAnalisAi",
-  description: "Ingat Saham, Ingat IzyAnalisAi.",
-};
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
 
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 1,
-  themeColor: "#0F172A",
-};
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  transition: background-color 300ms ease-out, color 300ms ease-out;
+}
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
-  return (
-    <html
-      lang="id"
-      suppressHydrationWarning
-      className={`dark ${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col bg-[var(--background)] text-[var(--foreground)]">
-        <ThemeProvider>
-          <LanguageProvider>
-            <Header />
-            <BottomNav />
-            <div className="flex-1 pb-20 lg:pb-0 lg:pl-60">{children}</div>
-          </LanguageProvider>
-        </ThemeProvider>
-      </body>
-    </html>
-  );
-                 }
+@keyframes gradient-flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-gradient-flow {
+  background-image: var(--gradient-bg);
+  background-size: 300% 300%;
+  animation: gradient-flow 13s ease-in-out infinite alternate;
+}
+
+/* Dokumen 3.6: Aksesibilitas — Reduced Motion Wajib.
+   Kalau user aktifkan "Reduce Motion" di OS, semua animasi dimatikan
+   atau diganti fade sederhana (durasi 0.01ms). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
