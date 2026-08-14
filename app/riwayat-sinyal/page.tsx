@@ -8,7 +8,7 @@ type HistoryItem = {
   id: string
   ticker: string
   stock_name: string
-  direction: 'BUY' | 'SELL' | 'HOLD'
+  direction: 'BUY' | 'SELL'
   timeframe: string
   status: string
   created_at: string
@@ -192,4 +192,4 @@ export default function RiwayatSinyalPage() {
       </div>
     </main>
   )
-}
+                  }
