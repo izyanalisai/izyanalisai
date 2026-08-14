@@ -3,13 +3,14 @@
 import type { ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useLang, type DictKey } from '@/lib/preferences'
 
 const GRADIENT =
   'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)'
 
 type NavItem = {
   href: string
-  label: string
+  labelKey: DictKey
   icon: (active: boolean) => ReactNode
 }
 
@@ -29,7 +30,7 @@ function iconProps(active: boolean) {
 const NAV_ITEMS: NavItem[] = [
   {
     href: '/',
-    label: 'Home',
+    labelKey: 'nav_home',
     icon: (active) => (
       <svg {...iconProps(active)}>
         <path d="M3 10.5 12 3l9 7.5" />
@@ -39,7 +40,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     href: '/screener',
-    label: 'Screener',
+    labelKey: 'nav_screener',
     icon: (active) => (
       <svg {...iconProps(active)}>
         <rect x="3" y="12" width="4" height="8" rx="1" />
@@ -50,7 +51,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     href: '/signal',
-    label: 'Signal',
+    labelKey: 'nav_signal',
     icon: (active) => (
       <svg {...iconProps(active)}>
         <path d="M3 12h4l2-7 4 14 2-7h6" />
@@ -59,7 +60,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     href: '/watchlist',
-    label: 'Watchlist',
+    labelKey: 'nav_watchlist',
     icon: (active) => (
       <svg {...iconProps(active)}>
         <path d="M12 4.5c-4-3-9 0-9 4.8 0 4 3.5 6.6 9 11.2 5.5-4.6 9-7.2 9-11.2 0-4.8-5-7.8-9-4.8Z" />
@@ -68,7 +69,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     href: '/ai-task',
-    label: 'AI Task',
+    labelKey: 'nav_ai_task',
     icon: (active) => (
       <svg {...iconProps(active)}>
         <circle cx="12" cy="12" r="8.5" />
@@ -78,7 +79,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     href: '/profil',
-    label: 'Profil',
+    labelKey: 'nav_profil',
     icon: (active) => (
       <svg {...iconProps(active)}>
         <circle cx="12" cy="8" r="3.5" />
@@ -92,7 +93,7 @@ const NAV_ITEMS: NavItem[] = [
 // semua alur pre-auth (landing, login, daftar, onboarding, agreement,
 // profil-risiko, lupa/reset password) + halaman dalam yang sudah full-screen.
 export const NO_SHELL_PREFIXES = [
-  '/landing', '/login', '/daftar', '/onboarding', '/agreement',
+  '/splash', '/landing', '/login', '/daftar', '/onboarding', '/agreement',
   '/profil-risiko', '/lupa-password', '/reset-password', '/auth',
 ]
 
@@ -105,6 +106,7 @@ const HIDDEN_PREFIXES = [
 
 export default function BottomNav() {
   const pathname = usePathname()
+  const { t } = useLang()
 
   if (HIDDEN_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) {
     return null
@@ -156,7 +158,7 @@ export default function BottomNav() {
                     active ? 'text-white font-medium' : 'text-slate-500'
                   }`}
                 >
-                  {item.label}
+                  {t(item.labelKey)}
                 </span>
               </Link>
             </li>
