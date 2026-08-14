@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import type { User } from '@supabase/supabase-js'
+import ChartUploadModal from '@/components/ChartUploadModal'
 
 type Stock = {
   id: string
@@ -93,6 +94,7 @@ export default function StockDetail({ ticker }: { ticker: string }) {
 
   const [unlockLoading, setUnlockLoading] = useState(false)
   const [unlockMsg, setUnlockMsg] = useState<string | null>(null)
+  const [showChartUpload, setShowChartUpload] = useState(false)
 
   const loadSignal = useCallback(async (stockId: string) => {
     const { data, error } = await supabase.rpc('get_signal_for_stock', { p_stock_id: stockId })
@@ -368,6 +370,13 @@ export default function StockDetail({ ticker }: { ticker: string }) {
           </div>
         )}
 
+        <button
+          onClick={() => setShowChartUpload(true)}
+          className="w-full rounded-xl bg-white/5 border border-white/10 py-3 text-sm font-medium flex items-center justify-center gap-2"
+        >
+          Upload Chart untuk Analisis AI
+        </button>
+
         <div className="rounded-xl bg-white/5 border border-white/10 px-4 py-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold text-sm">Sinyal AI</h2>
@@ -526,6 +535,12 @@ export default function StockDetail({ ticker }: { ticker: string }) {
           </button>
         </div>
       </div>
+
+      <ChartUploadModal
+        open={showChartUpload}
+        onClose={() => setShowChartUpload(false)}
+        defaultTicker={stock.ticker}
+      />
     </main>
   )
 }

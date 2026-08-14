@@ -3,6 +3,7 @@
 import { createClient } from '@/lib/supabase/client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import ChartUploadModal from '@/components/ChartUploadModal'
 
 type ChatMessage = {
   id: string
@@ -21,6 +22,7 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false)
   const [tokenBalance, setTokenBalance] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showChartUpload, setShowChartUpload] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const loadWallet = useCallback(async () => {
@@ -118,6 +120,17 @@ export default function ChatPage() {
           {tokenBalance !== null ? `${tokenBalance} token` : ''}
         </span>
       </header>
+
+      <div className="px-4 pt-3">
+        <button
+          onClick={() => setShowChartUpload(true)}
+          className="w-full rounded-xl bg-white/5 border border-white/10 py-2.5 text-xs font-medium text-slate-300"
+        >
+          Upload Chart untuk Analisis AI
+        </button>
+      </div>
+
+      <ChartUploadModal open={showChartUpload} onClose={() => setShowChartUpload(false)} />
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 pb-28">
         {messages.length === 0 && (
