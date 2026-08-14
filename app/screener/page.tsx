@@ -3,6 +3,7 @@
 import { createClient } from '@/lib/supabase/client'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import SectorRotationFlow from '@/components/SectorRotationFlow'
 
 type Sector = { id: string; name: string }
 type Stock = {
@@ -21,7 +22,7 @@ type Stock = {
 
 type MarketCapFilter = 'ALL' | 'SMALL' | 'MID' | 'BIG'
 type VolumeFilter = 'ALL' | 'RENDAH' | 'SEDANG' | 'TINGGI'
-type ViewMode = 'HEATMAP' | 'LIST'
+type ViewMode = 'HEATMAP' | 'LIST' | 'ROTATION'
 
 function formatHarga(n: number | null) {
   if (n === null || n === undefined) return '-'
@@ -71,6 +72,21 @@ export default function ScreenerPage() {
   const [marketCapFilter, setMarketCapFilter] = useState<MarketCapFilter>('ALL')
   const [volumeFilter, setVolumeFilter] = useState<VolumeFilter>('ALL')
   const [view, setView] = useState<ViewMode>('HEATMAP')
+  const [isPremium, setIsPremium] = useState(false)
+
+  useEffect(() => {
+    async function loadPremiumStatus() {
+      const { data: userData } = await supabase.auth.getUser()
+      if (!userData.user) return
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('is_premium')
+        .eq('id', userData.user.id)
+        .single()
+      setIsPremium(profile?.is_premium ?? false)
+    }
+    loadPremiumStatus()
+  }, [supabase])
 
   useEffect(() => {
     let active = true
@@ -195,6 +211,13 @@ export default function ScreenerPage() {
         >
           Daftar Saham
         </button>
+        <button
+          onClick={() => setView('ROTATION')}
+          className="flex-1 rounded-xl px-4 py-2 text-xs font-medium border transition-colors duration-200"
+          style={view === 'ROTATION' ? pillActiveStyle : pillInactiveStyle}
+        >
+          Sector Rotation
+        </button>
       </div>
 
       {/* Filter Market Cap & Volume */}
@@ -279,6 +302,8 @@ export default function ScreenerPage() {
         ))}
 
       {loading && <p className="mt-5 text-slate-500 text-sm">Memuat...</p>}
+
+      {!loading && view === 'ROTATION' && <SectorRotationFlow isPremium={isPremium} />}
 
       {/* HEATMAP VIEW */}
       {!loading && view === 'HEATMAP' && (
