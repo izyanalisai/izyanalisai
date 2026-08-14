@@ -48,7 +48,9 @@ function SectionBody({ section }: { section: SectionKey }) {
           <p>
             Kami menyimpan data akun (nama, email), preferensi (profil risiko, watchlist),
             riwayat interaksi AI, dan data transaksi (token, langganan) untuk menjalankan
-            fitur aplikasi.
+            fitur aplikasi. Dasar pemrosesan data ini adalah persetujuan kamu saat mendaftar
+            dan kebutuhan pelaksanaan layanan, sesuai UU No. 27 Tahun 2022 tentang
+            Pelindungan Data Pribadi (UU PDP).
           </p>
           <p>
             Data tidak dijual ke pihak ketiga. Data dibagikan hanya ke penyedia layanan yang
@@ -56,6 +58,13 @@ function SectionBody({ section }: { section: SectionKey }) {
             (Midtrans), dan layanan iklan (Google AdMob).
           </p>
           <p>Data disimpan selama akun aktif, dan dihapus mengikuti kebijakan Hapus Akun.</p>
+          <p>
+            Sesuai UU PDP, kamu berhak: mengakses dan mendapat salinan data pribadimu,
+            meminta koreksi data yang tidak akurat, meminta penghapusan atau pemusnahan data,
+            menarik persetujuan pemrosesan data, dan mengajukan keberatan atas pemrosesan
+            tertentu. Untuk menggunakan hak-hak ini, hubungi kami lewat menu Dukungan di
+            Profil.
+          </p>
         </div>
       )
     case 'dyor':
@@ -106,12 +115,20 @@ function SectionBody({ section }: { section: SectionKey }) {
       return (
         <div className="space-y-2 text-sm text-slate-300 leading-relaxed">
           <p>
-            IzyAnalisAi adalah platform analisa dan edukasi, bukan perusahaan sekuritas,
-            manajer investasi, atau penasihat investasi berizin.
+            IzyAnalisAi adalah platform analisa dan edukasi, <strong>bukan</strong> perusahaan
+            sekuritas, manajer investasi, penasihat investasi, atau pihak lain yang memiliki
+            izin dari Otoritas Jasa Keuangan (OJK) untuk memberikan nasihat atau rekomendasi
+            investasi.
+          </p>
+          <p>
+            Sinyal BUY/SELL/HOLD, Entry, Target, dan Stop Loss yang ditampilkan adalah hasil
+            perhitungan sistem berbasis data historis untuk tujuan analisa dan edukasi, dan{' '}
+            <strong>bukan ajakan, penawaran, atau rekomendasi resmi</strong> untuk membeli
+            atau menjual efek tertentu.
           </p>
           <p>
             Aplikasi ini tidak mengeksekusi transaksi jual-beli saham. Eksekusi transaksi
-            tetap dilakukan lewat aplikasi sekuritas resmi milik kamu sendiri.
+            tetap dilakukan lewat aplikasi sekuritas resmi berizin OJK milik kamu sendiri.
           </p>
         </div>
       )
