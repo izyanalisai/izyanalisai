@@ -7,7 +7,7 @@ import Link from 'next/link'
 
 type SignalRow = {
   id: string
-  direction: 'BUY' | 'SELL' | 'HOLD'
+  direction: 'BUY' | 'SELL'
   created_at: string
   stock_id: string
   ticker: string
