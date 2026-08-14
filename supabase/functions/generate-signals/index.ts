@@ -27,25 +27,68 @@ function computeATR(candles: CandleRow[], period = ATR_PERIOD): number | null {
   return lastN.reduce((a, b) => a + b, 0) / lastN.length
 }
 
-function scoreSignal(ind: IndicatorRow, lastCandle: CandleRow, prevClose: number) {
-  // v5: confluence-based. Sinyal cuma valid kalau RSI DAN MACD (2 indikator
-  // paling kuat menurut diagnostik per-indikator, PF 1.15 & 1.07) SAMA-SAMA
-  // searah -- bukan dijumlah bebas kayak v1-v4 yang PF-nya stuck ~1.0-1.1.
-  // EMA/Volume/Candle cuma nambah confidence kalau confluence-nya sudah ada,
-  // TIDAK bisa menggantikan confluence RSI+MACD.
+// EMA sederhana dari array close -- dipakai untuk cek SLOPE ema21 (naik/turun
+// beberapa bar terakhir). Tabel `indicators` di produksi cuma nyimpen 1 baris
+// snapshot terbaru per stock+timeframe (unique constraint), jadi slope tidak
+// bisa didapat dari situ -- harus dihitung ulang dari 60 candle mentah yang
+// sudah di-fetch. WAJIB identik dengan backtest-signals/index.ts.
+function emaSeries(values: number[], period: number): (number | null)[] {
+  const result: (number | null)[] = new Array(values.length).fill(null)
+  if (values.length < period) return result
+  const k = 2 / (period + 1)
+  let sma = 0
+  for (let i = 0; i < period; i++) sma += values[i]
+  sma /= period
+  result[period - 1] = sma
+  let prev = sma
+  for (let i = period; i < values.length; i++) {
+    const val = values[i] * k + prev * (1 - k)
+    result[i] = val
+    prev = val
+  }
+  return result
+}
+
+function scoreSignal(ind: IndicatorRow, candles: CandleRow[]) {
+  // v7: confluence RSI+MACD (v5) DITAMBAH 3 filter ketat baru, dirancang buat
+  // naikin Win Rate dari v6 (33.5%, cuma breakeven di R:R 1:2) -- v6 lolos
+  // masuk sinyal tiap kali RSI & MACD searah, TANPA peduli entry-nya udah
+  // "telat"/exhausted atau trend-nya beneran nge-gas. v7 nolak 3 kondisi itu:
+  //   1. RSI overbought (>70) -- biasanya udah mau retrace, bukan awal tren.
+  //   2. EMA21 FLAT/TURUN -- confluence RSI+MACD bisa muncul di sideways/
+  //      choppy market, bukan cuma di uptrend beneran. v6 cuma cek ema5>21
+  //      (alignment sesaat), bukan slope (tren bergerak beberapa bar).
+  //   3. Stochastic overbought (>80) -- entry di puncak jangka pendek, rawan
+  //      kena stop out random sebelum sempat lanjut naik.
   let score = 0
   const evidence: Record<string, string> = {}
+  const lastCandle = candles[candles.length - 1]
+  const prevClose = candles[candles.length - 2].close
 
-  const rsiBullish = ind.rsi14 != null && ind.rsi14 > 55
+  const rsiBullish = ind.rsi14 != null && ind.rsi14 > 55 && ind.rsi14 < 70
+  const rsiOverbought = ind.rsi14 != null && ind.rsi14 >= 70
   const rsiBearish = ind.rsi14 != null && ind.rsi14 < 45
   const macdBullish = ind.macd_line != null && ind.macd_signal != null && ind.macd_line > ind.macd_signal
   const macdBearish = ind.macd_line != null && ind.macd_signal != null && ind.macd_line < ind.macd_signal
 
-  const confluenceBuy = rsiBullish && macdBullish
-  const confluenceSell = rsiBearish && macdBearish
+  const closes = candles.map((c) => c.close)
+  const ema21Series = emaSeries(closes, 21)
+  const lastIdx = ema21Series.length - 1
+  const slopeLookback = 5
+  const ema21Now = ema21Series[lastIdx]
+  const ema21Before = lastIdx - slopeLookback >= 0 ? ema21Series[lastIdx - slopeLookback] : null
+  const trendUp = ema21Now != null && ema21Before != null && ema21Now > ema21Before
+  const trendDown = ema21Now != null && ema21Before != null && ema21Now < ema21Before
 
+  const stochOverbought = ind.stoch_k != null && ind.stoch_k >= 80
+  const stochOversold = ind.stoch_k != null && ind.stoch_k <= 20
+
+  const confluenceBuy = rsiBullish && macdBullish && trendUp && !stochOverbought
+  const confluenceSell = rsiBearish && macdBearish && trendDown && !stochOversold
+
+  if (rsiOverbought) evidence.rsi_filter = `ditolak -- RSI overbought (${ind.rsi14!.toFixed(1)})`
   if (!confluenceBuy && !confluenceSell) {
-    evidence.confluence = 'tidak ada -- RSI dan MACD tidak searah'
+    evidence.confluence = 'tidak ada -- RSI/MACD/trend EMA21/Stochastic tidak semua searah'
     return { score: 0, evidence }
   }
 
@@ -53,10 +96,14 @@ function scoreSignal(ind: IndicatorRow, lastCandle: CandleRow, prevClose: number
     score += 5
     evidence.rsi = `bullish (${ind.rsi14!.toFixed(1)})`
     evidence.macd = 'bullish crossover'
+    evidence.trend = 'EMA21 naik (slope 5 bar positif)'
+    evidence.stochastic = `tidak overbought (${ind.stoch_k?.toFixed(1) ?? 'N/A'})`
   } else {
     score -= 5
     evidence.rsi = `bearish (${ind.rsi14!.toFixed(1)})`
     evidence.macd = 'bearish crossover'
+    evidence.trend = 'EMA21 turun (slope 5 bar negatif)'
+    evidence.stochastic = `tidak oversold (${ind.stoch_k?.toFixed(1) ?? 'N/A'})`
   }
 
   if (ind.ema5 != null && ind.ema21 != null && ind.ema9 != null && ind.ema50 != null) {
@@ -165,14 +212,14 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      if (!indicator || usableCandles.length < ATR_PERIOD + 1) {
+      // Minimal 26 candle: EMA21 butuh 21 candle + 5 bar lookback buat slope.
+      if (!indicator || usableCandles.length < Math.max(ATR_PERIOD + 1, 26)) {
         totalSkipped++
         continue
       }
 
       const lastCandle = usableCandles[usableCandles.length - 1]
-      const prevClose = usableCandles[usableCandles.length - 2].close
-      const { score, evidence } = scoreSignal(indicator, lastCandle, prevClose)
+      const { score, evidence } = scoreSignal(indicator, usableCandles)
 
       let direction: 'BUY' | 'SELL' | null = null
       if (score >= 5) direction = 'BUY'
@@ -241,7 +288,7 @@ Deno.serve(async (req: Request) => {
           status: 'ACTIVE',
           support_level: support,
           resistance_level: resistance,
-          formula_version: 'baseline_v6',
+          formula_version: 'baseline_v7',
           engine_version: 'v1',
           evidence: { score, ...evidence },
           triggered_at: new Date().toISOString(),
