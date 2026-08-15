@@ -20,6 +20,7 @@ type SignalRow = {
   stop_loss: number | null
   confidence_score: number | null
   current_price: number | null
+  unlocked: boolean
 }
 
 type FilterValue = 'ALL' | 'BUY' | 'SELL'
@@ -82,6 +83,9 @@ export default function SignalPage() {
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set())
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
+  const [tokenBalance, setTokenBalance] = useState<number | null>(null)
+  const [unlockingId, setUnlockingId] = useState<string | null>(null)
+  const [unlockErr, setUnlockErr] = useState<{ id: string; message: string } | null>(null)
 
   useEffect(() => {
     let active = true
@@ -108,6 +112,13 @@ export default function SignalPage() {
           )
           setSavedIds(ids)
         }
+
+        const { data: wallet } = await supabase
+          .from('token_wallets')
+          .select('balance')
+          .eq('user_id', userData.user.id)
+          .maybeSingle()
+        if (active) setTokenBalance(wallet?.balance ?? null)
       }
     }
 
@@ -144,6 +155,47 @@ export default function SignalPage() {
       signal_snapshot: s,
     })
     setSavedIds((prev) => new Set(prev).add(s.id))
+  }
+
+  // Sama seperti alur unlock di Detail Saham (dokumen 6.5): 1 token per
+  // saham unik per hari. RPC ini yang menentukan angka, bukan client.
+  async function handleUnlockToken(s: SignalRow) {
+    if (!userId) {
+      window.location.href = '/login'
+      return
+    }
+
+    setUnlockingId(s.id)
+    setUnlockErr(null)
+
+    const idempotencyKey = crypto.randomUUID()
+    const { error } = await supabase.rpc('unlock_signal_with_token', {
+      p_stock_id: s.stock_id,
+      p_idempotency_key: idempotencyKey,
+    })
+
+    if (error) {
+      setUnlockErr({
+        id: s.id,
+        message: error.message.includes('INSUFFICIENT_TOKENS')
+          ? 'Token habis. Buka di Detail Saham untuk opsi nonton iklan atau upgrade Premium.'
+          : 'Gagal membuka sinyal. Coba lagi.',
+      })
+      setUnlockingId(null)
+      return
+    }
+
+    const { data } = await supabase.rpc('list_active_signals')
+    setSignals((data as SignalRow[]) ?? [])
+
+    const { data: wallet } = await supabase
+      .from('token_wallets')
+      .select('balance')
+      .eq('user_id', userId)
+      .maybeSingle()
+    setTokenBalance(wallet?.balance ?? null)
+
+    setUnlockingId(null)
   }
 
   function handleCopy(s: SignalRow) {
@@ -256,10 +308,50 @@ export default function SignalPage() {
                     />
                   </div>
 
-                  <p className="text-slate-500 text-xs mt-2">
-                    Buy Area, TP, SL & Confidence — buka di Detail Saham
-                  </p>
+                  {s.unlocked ? (
+                    <div className="mt-2 space-y-1 text-xs">
+                      {s.buy_area_low != null && s.buy_area_high != null && (
+                        <p className="text-slate-300">
+                          Buy Area: <span className="font-medium">{formatHarga(s.buy_area_low)} - {formatHarga(s.buy_area_high)}</span>
+                        </p>
+                      )}
+                      <div className="flex gap-3 text-slate-300">
+                        {s.tp1 != null && <span>TP1: <span className="text-[#22C55E] font-medium">{formatHarga(s.tp1)}</span></span>}
+                        {s.tp2 != null && <span>TP2: <span className="text-[#22C55E] font-medium">{formatHarga(s.tp2)}</span></span>}
+                        {s.stop_loss != null && <span>SL: <span className="text-[#EF4444] font-medium">{formatHarga(s.stop_loss)}</span></span>}
+                      </div>
+                      {s.confidence_score != null && (
+                        <p className="text-slate-500">Confidence: {s.confidence_score}%</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-slate-500 text-xs mt-2">
+                      Buy Area, TP, SL & Confidence terkunci
+                    </p>
+                  )}
                 </Link>
+
+                {!s.unlocked && (
+                  <div className="mt-2 space-y-1.5">
+                    <button
+                      onClick={() => handleUnlockToken(s)}
+                      disabled={unlockingId === s.id}
+                      className="w-full rounded-lg py-2 text-xs font-medium text-white disabled:opacity-60"
+                      style={{
+                        backgroundImage:
+                          'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)',
+                      }}
+                    >
+                      {unlockingId === s.id ? 'Memproses...' : 'Lihat Penjelasan Lengkap (1 Token)'}
+                    </button>
+                    {userId && tokenBalance !== null && (
+                      <p className="text-slate-600 text-[10px] text-center">Sisa token hari ini: {tokenBalance}</p>
+                    )}
+                    {unlockErr && unlockErr.id === s.id && (
+                      <p className="text-[#EF4444] text-[10px] text-center">{unlockErr.message}</p>
+                    )}
+                  </div>
+                )}
 
                 <div className="mt-3 flex gap-2">
                   <button
