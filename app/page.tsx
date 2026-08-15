@@ -5,6 +5,7 @@ import { getPostLoginPath } from '@/lib/auth-flow'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import PlexusBackground from '@/components/PlexusBackground'
 
 const GRADIENT =
   'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)'
@@ -237,7 +238,11 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-[#0F172A] text-white px-4 py-4 max-w-[480px] mx-auto">
+    <main className="min-h-screen relative overflow-hidden bg-[#0F172A] text-white px-4 py-4 max-w-[480px] mx-auto">
+      {/* Plexus subtle di belakang kartu-kartu — jangan naikkan opacity/density,
+          Home padat data (IHSG, breadth, sinyal) dan butuh tetap kebaca cepat. */}
+      <PlexusBackground density="subtle" />
+
       {/* Header: avatar, sapaan, notifikasi */}
       <div className="flex items-center justify-between">
         <Link href={avatarHref} className="flex items-center gap-2.5">
@@ -469,4 +474,4 @@ export default function Home() {
       </section>
     </main>
   )
-        }
+            }
