@@ -132,12 +132,14 @@ export default function ScreenerPage() {
     return 'TINGGI'
   }
 
-  const filtered = useMemo(() => {
+  // Filter Market Cap/Volume/Search dipakai bersama oleh List DAN Heatmap.
+  // Sebelumnya filter ini hanya diterapkan ke `filtered` (dipakai List view),
+  // sehingga di tab Heatmap tombol filter berubah state tapi tidak berefek
+  // ke tampilan (bug: "tombol kosong"). Sekarang Heatmap ikut memakai
+  // `commonFiltered` yang sama sebagai dasar agregasi per sektor.
+  const commonFiltered = useMemo(() => {
     let list = stocks
 
-    if (activeSector) {
-      list = list.filter((s) => s.sector_id === activeSector)
-    }
     if (query) {
       const q = query.toUpperCase()
       list = list.filter(
@@ -155,20 +157,30 @@ export default function ScreenerPage() {
       )
     }
 
-    return list.slice(0, 50)
-  }, [stocks, query, activeSector, marketCapFilter, volumeFilter, volumeQuartiles])
+    return list
+  }, [stocks, query, marketCapFilter, volumeFilter, volumeQuartiles])
 
-  // Agregat per sektor untuk heatmap: rata-rata persen perubahan
+  const filtered = useMemo(() => {
+    let list = commonFiltered
+    if (activeSector) {
+      list = list.filter((s) => s.sector_id === activeSector)
+    }
+    return list.slice(0, 50)
+  }, [commonFiltered, activeSector])
+
+  // Agregat per sektor untuk heatmap: rata-rata persen perubahan.
+  // Memakai commonFiltered supaya filter Market Cap/Volume/Search juga
+  // mempengaruhi tampilan Heatmap, bukan hanya tab List.
   const sectorHeat = useMemo(() => {
     return sectors.map((sector) => {
-      const members = stocks.filter((s) => s.sector_id === sector.id)
+      const members = commonFiltered.filter((s) => s.sector_id === sector.id)
       const pcts = members
         .map((s) => pctChange(s.quotes?.price ?? null, s.quotes?.previous_close ?? null))
         .filter((p): p is number => p !== null)
       const avgPct = pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null
       return { sector, avgPct, count: members.length }
     })
-  }, [sectors, stocks])
+  }, [sectors, commonFiltered])
 
   const hasSectorData = sectors.length > 0
   const activeFilterCount =
@@ -308,6 +320,11 @@ export default function ScreenerPage() {
       {/* HEATMAP VIEW */}
       {!loading && view === 'HEATMAP' && (
         <div className="mt-5">
+          {activeFilterCount > 0 && (
+            <p className="text-slate-500 text-[11px] mb-2">
+              Heatmap menampilkan {commonFiltered.length} saham sesuai filter aktif
+            </p>
+          )}
           {!hasSectorData ? (
             <div className="rounded-xl bg-white/5 border border-white/10 px-4 py-3">
               <p className="text-slate-500 text-xs">
