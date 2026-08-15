@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import PlexusBackground from '@/components/PlexusBackground'
 
 export default function LandingPage() {
   const router = useRouter()
@@ -22,6 +23,7 @@ export default function LandingPage() {
   return (
     <main className="min-h-screen relative overflow-hidden text-white px-6 py-10 max-w-[480px] mx-auto flex flex-col justify-center">
       <div className="absolute inset-0 -z-10 animate-gradient-flow" />
+      <PlexusBackground density="normal" />
 
       <span className="inline-block self-center rounded-full bg-white/10 border border-white/10 px-4 py-1.5 text-xs text-slate-300 mb-6">
         Analisa Saham Berbasis AI
