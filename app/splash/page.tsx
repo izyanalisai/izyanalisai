@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { getPostLoginPath } from '@/lib/auth-flow'
+import PlexusBackground from '@/components/PlexusBackground'
 
 // Dokumen 4.1 Splash:
 // - Logo fade + scale, tagline, loading text crossfade, ~2 detik atau
@@ -44,6 +45,7 @@ export default function SplashPage() {
   return (
     <main className="min-h-screen relative overflow-hidden flex flex-col items-center justify-center text-white max-w-[480px] mx-auto">
       <div className="absolute inset-0 -z-10 animate-gradient-flow" />
+      <PlexusBackground density="normal" />
 
       <div
         className={`flex flex-col items-center gap-4 transition-all duration-[1200ms] ease-out motion-reduce:transition-none ${
