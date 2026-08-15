@@ -104,7 +104,6 @@ export default function Home() {
   const [avatarHref, setAvatarHref] = useState('/login')
 
   const [ihsg, setIhsg] = useState<{ value: number | null; previous_close: number | null; quality: string | null } | null>(null)
-  const [foreignFlow, setForeignFlow] = useState<{ net_value: number } | null>(null)
   const [stocks, setStocks] = useState<StockRow[]>([])
   const [signals, setSignals] = useState<SignalRow[]>([])
   const [econEvents, setEconEvents] = useState<EconEvent[]>([])
@@ -159,10 +158,9 @@ export default function Home() {
         setTokenBalance(wallet?.balance ?? null)
       }
 
-      const [{ data: idx }, { data: flow }, { data: stockData }, { data: signalData }, { data: econData }, { data: newsData }] =
+      const [{ data: idx }, { data: stockData }, { data: signalData }, { data: econData }, { data: newsData }] =
         await Promise.all([
           supabase.from('market_index').select('value, previous_close, quality').eq('ticker', '^JKSE').maybeSingle(),
-          supabase.from('foreign_flow').select('net_value').order('date', { ascending: false }).limit(1).maybeSingle(),
           supabase
             .from('stocks')
             .select('id, ticker, name, quotes ( price, previous_close, volume )')
@@ -193,7 +191,6 @@ export default function Home() {
       }))
 
       setIhsg(idx ?? null)
-      setForeignFlow(flow ?? null)
       setStocks(stockList)
       setSignals(enrichedSignals)
       setEconEvents(econData ?? [])
@@ -305,8 +302,10 @@ export default function Home() {
         )}
       </div>
 
-      {/* Market Breadth + Foreign Flow */}
-      <div className="mt-3 grid grid-cols-2 gap-3">
+      {/* Market Breadth. Foreign Flow disembunyikan sementara: tabel foreign_flow
+          belum ada worker pengisi (Yahoo Finance tidak menyediakan data net
+          buy/sell asing). Tampilkan lagi setelah ada sumber data resmi. */}
+      <div className="mt-3">
         <div className="rounded-2xl bg-white/5 border border-white/10 px-4 py-3">
           <p className="text-[11px] text-slate-400">Market Breadth</p>
           <p className="text-sm mt-1.5">
@@ -315,16 +314,6 @@ export default function Home() {
             <span className="text-[#EF4444] font-semibold">{breadth.down} turun</span>
           </p>
           <p className="text-[10px] text-slate-500 mt-0.5">{breadth.flat} tidak berubah · {breadth.advancingPct.toFixed(0)}% advancing</p>
-        </div>
-        <div className="rounded-2xl bg-white/5 border border-white/10 px-4 py-3">
-          <p className="text-[11px] text-slate-400">Foreign Flow</p>
-          {foreignFlow ? (
-            <p className={`text-sm font-semibold mt-1.5 ${foreignFlow.net_value >= 0 ? 'text-[#22C55E]' : 'text-[#EF4444]'}`}>
-              {foreignFlow.net_value >= 0 ? 'Net Buy' : 'Net Sell'} {formatHarga(Math.abs(foreignFlow.net_value))}
-            </p>
-          ) : (
-            <p className="text-sm text-slate-500 mt-1.5">Data menyusul</p>
-          )}
         </div>
       </div>
 
@@ -480,4 +469,4 @@ export default function Home() {
       </section>
     </main>
   )
-                                      }
+        }
