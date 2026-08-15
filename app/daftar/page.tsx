@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import { getPostLoginPath } from '@/lib/auth-flow'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import PlexusBackground from '@/components/PlexusBackground'
 
 const MAX_ATTEMPTS = 5
 const LOCK_MS = 15 * 60 * 1000
@@ -104,7 +105,8 @@ export default function DaftarPage() {
 
   if (step === 'otp') {
     return (
-      <main className="min-h-screen bg-[#0F172A] text-white px-4 py-10 max-w-[480px] mx-auto flex flex-col justify-center">
+      <main className="min-h-screen relative overflow-hidden bg-[#0F172A] text-white px-4 py-10 max-w-[480px] mx-auto flex flex-col justify-center">
+        <PlexusBackground density="normal" />
         <h1 className="text-2xl font-bold mb-2 text-center">Verifikasi Email</h1>
         <p className="text-slate-400 text-sm text-center mb-6">
           Masukkan 6 digit kode yang dikirim ke {email}
@@ -151,7 +153,8 @@ export default function DaftarPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#0F172A] text-white px-4 py-10 max-w-[480px] mx-auto flex flex-col justify-center">
+    <main className="min-h-screen relative overflow-hidden bg-[#0F172A] text-white px-4 py-10 max-w-[480px] mx-auto flex flex-col justify-center">
+      <PlexusBackground density="normal" />
       <h1
         className="text-3xl font-bold bg-clip-text text-transparent mb-8 text-center"
         style={{ backgroundImage: 'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)' }}
@@ -212,4 +215,4 @@ export default function DaftarPage() {
       </p>
     </main>
   )
-}
+      }
