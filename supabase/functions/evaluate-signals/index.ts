@@ -1,8 +1,9 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { classifySignalStatus, type SignalInput } from './logic.ts'
 
 // Worker 3 - Evaluate TP/SL/Expiry (poin 10.9 & 14.2).
-// Sinyal ACTIVE atau HIT_TP1 (belum terminal) dicek terhadap harga terkini di tabel quotes.
-// Terminal state: HIT_TP2, HIT_SL, EXPIRED, INVALIDATED — tidak dievaluasi ulang.
+// Logic klasifikasi status dipisah ke logic.ts supaya bisa di-unit-test
+// (lihat logic.test.ts) tanpa perlu koneksi Supabase asli.
 
 type SignalRow = {
   id: string; stock_id: string; direction: 'BUY' | 'SELL' | 'HOLD'
@@ -10,11 +11,17 @@ type SignalRow = {
   status: string; expires_at: string | null
 }
 
-Deno.serve(async (_req: Request) => {
+Deno.serve(async (req: Request) => {
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   )
+
+  const providedSecret = req.headers.get('x-worker-secret')
+  const { data: secretRow } = await supabase.from('internal_secrets').select('value').eq('key', 'worker_shared_secret').maybeSingle()
+  if (!providedSecret || !secretRow || providedSecret !== secretRow.value) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
+  }
 
   const { data: signals, error: sigErr } = await supabase
     .from('signals')
@@ -32,9 +39,6 @@ Deno.serve(async (_req: Request) => {
 
   const stockIds = [...new Set((signals as SignalRow[]).map((s) => s.stock_id))]
 
-  // Query quotes per-chunk. .in() dikirim via GET dan stockIds di-embed di URL query
-  // string — kalau jumlah saham banyak, URL bisa kepanjangan dan kena HTTP/2 header
-  // size limit di proxy Supabase (muncul sebagai "stream error: Protocol error").
   const QUOTE_CHUNK_SIZE = 150
   const priceMap = new Map<string, number>()
   for (let i = 0; i < stockIds.length; i += QUOTE_CHUNK_SIZE) {
@@ -60,19 +64,7 @@ Deno.serve(async (_req: Request) => {
     const price = priceMap.get(s.stock_id)
     if (price == null) { noPriceCount++; continue }
 
-    let newStatus = s.status
-
-    if (s.expires_at && new Date(s.expires_at) < now) {
-      newStatus = 'EXPIRED'
-    } else if (s.direction === 'BUY') {
-      if (s.stop_loss != null && price <= s.stop_loss) newStatus = 'HIT_SL'
-      else if (s.tp2 != null && price >= s.tp2) newStatus = 'HIT_TP2'
-      else if (s.tp1 != null && price >= s.tp1 && s.status !== 'HIT_TP1') newStatus = 'HIT_TP1'
-    } else if (s.direction === 'SELL') {
-      if (s.stop_loss != null && price >= s.stop_loss) newStatus = 'HIT_SL'
-      else if (s.tp2 != null && price <= s.tp2) newStatus = 'HIT_TP2'
-      else if (s.tp1 != null && price <= s.tp1 && s.status !== 'HIT_TP1') newStatus = 'HIT_TP1'
-    }
+    const newStatus = classifySignalStatus(s as unknown as SignalInput, price, now)
 
     if (newStatus !== s.status) {
       const list = updatesByStatus.get(newStatus) ?? []
@@ -90,7 +82,7 @@ Deno.serve(async (_req: Request) => {
       try {
         const { error: updErr } = await supabase
           .from('signals')
-          .update({ status, triggered_at: now.toISOString() })
+          .update({ status, resolved_at: now.toISOString() })
           .in('id', chunk)
         if (!updErr) okCount += chunk.length
       } catch (_e) {
