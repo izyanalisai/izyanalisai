@@ -22,6 +22,19 @@ type WatchlistItem = {
 
 type StockSearchResult = { id: string; ticker: string; name: string }
 
+type SavedSignalSnapshot = {
+  id: string
+  ticker: string
+  name: string
+  direction: 'BUY' | 'SELL'
+  entry_price: number | null
+  tp1: number | null
+  tp2: number | null
+  stop_loss: number | null
+}
+
+type SavedSignalRow = { id: string; created_at: string; signal_snapshot: SavedSignalSnapshot }
+
 function formatHarga(n: number | null) {
   if (n === null || n === undefined) return '-'
   return new Intl.NumberFormat('id-ID').format(n)
@@ -53,6 +66,12 @@ export default function WatchlistPage() {
   const [addQuery, setAddQuery] = useState('')
   const [addResults, setAddResults] = useState<StockSearchResult[]>([])
   const [addMsg, setAddMsg] = useState<string | null>(null)
+
+  // Sinyal Tersimpan dipisahkan dari daftar saham biasa (spec 5.7) — snapshot
+  // statis, tidak berubah walau sinyal asli sudah expired/di-update.
+  const [tab, setTab] = useState<'SAHAM' | 'SINYAL'>('SAHAM')
+  const [savedSignals, setSavedSignals] = useState<SavedSignalRow[]>([])
+  const [savedLoading, setSavedLoading] = useState(true)
 
   useEffect(() => {
     let active = true
@@ -106,6 +125,30 @@ export default function WatchlistPage() {
     if (!activeFolderId) return
     loadItems(activeFolderId)
   }, [activeFolderId, loadItems])
+
+  useEffect(() => {
+    if (!user) return
+    let active = true
+    setSavedLoading(true)
+    supabase
+      .from('saved_signals')
+      .select('id, created_at, signal_snapshot')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        if (!active) return
+        setSavedSignals((data as unknown as SavedSignalRow[]) ?? [])
+        setSavedLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [user])
+
+  const handleUnsaveSignal = async (id: string) => {
+    setSavedSignals((prev) => prev.filter((s) => s.id !== id))
+    await supabase.from('saved_signals').delete().eq('id', id)
+  }
 
   const handleRemove = async (itemId: string) => {
     setRemovingId(itemId)
@@ -202,7 +245,7 @@ export default function WatchlistPage() {
     <main className="min-h-screen bg-[#0F172A] text-white px-4 py-6 max-w-[480px] mx-auto">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Watchlist</h1>
-        {activeFolderId && folders.length > 0 && (
+        {tab === 'SAHAM' && activeFolderId && folders.length > 0 && (
           <button
             onClick={() => {
               setAddOpen((v) => !v)
@@ -219,6 +262,101 @@ export default function WatchlistPage() {
         )}
       </div>
 
+      <div className="mt-4 flex gap-2">
+        <button
+          onClick={() => setTab('SAHAM')}
+          className="flex-1 rounded-xl px-4 py-2 text-xs font-medium border transition-colors duration-200"
+          style={
+            tab === 'SAHAM'
+              ? {
+                  backgroundImage:
+                    'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)',
+                  color: '#fff',
+                  borderColor: 'transparent',
+                }
+              : { color: '#94A3B8', borderColor: 'rgba(255,255,255,0.1)' }
+          }
+        >
+          Daftar Saham
+        </button>
+        <button
+          onClick={() => setTab('SINYAL')}
+          className="flex-1 rounded-xl px-4 py-2 text-xs font-medium border transition-colors duration-200"
+          style={
+            tab === 'SINYAL'
+              ? {
+                  backgroundImage:
+                    'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)',
+                  color: '#fff',
+                  borderColor: 'transparent',
+                }
+              : { color: '#94A3B8', borderColor: 'rgba(255,255,255,0.1)' }
+          }
+        >
+          Sinyal Tersimpan{savedSignals.length > 0 ? ` (${savedSignals.length})` : ''}
+        </button>
+      </div>
+
+      {tab === 'SINYAL' && (
+        <div className="mt-5 space-y-2">
+          {savedLoading && <p className="text-slate-500 text-sm">Memuat...</p>}
+          {!savedLoading && savedSignals.length === 0 && (
+            <div className="rounded-xl bg-white/5 border border-white/10 px-4 py-8 text-center">
+              <p className="text-slate-400 text-sm mb-3">Belum ada sinyal tersimpan</p>
+              <Link
+                href="/signal"
+                className="inline-block text-xs font-medium text-white rounded-full px-4 py-2"
+                style={{
+                  backgroundImage:
+                    'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)',
+                }}
+              >
+                Lihat Sinyal
+              </Link>
+            </div>
+          )}
+          {!savedLoading &&
+            savedSignals.map((row) => {
+              const snap = row.signal_snapshot
+              const up = snap.direction === 'BUY'
+              return (
+                <div
+                  key={row.id}
+                  className="rounded-xl bg-white/5 border border-white/10 px-4 py-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <Link href={`/saham/${snap.ticker}`} className="min-w-0">
+                      <p className="font-semibold text-sm">
+                        {snap.ticker}{' '}
+                        <span className={up ? 'text-[#22C55E]' : 'text-[#EF4444]'}>
+                          {snap.direction}
+                        </span>
+                      </p>
+                      <p className="text-slate-400 text-xs truncate">{snap.name}</p>
+                    </Link>
+                    <button
+                      onClick={() => handleUnsaveSignal(row.id)}
+                      className="text-slate-500 hover:text-[#EF4444] transition-colors duration-200 text-xs font-medium px-2 py-1 shrink-0"
+                    >
+                      Hapus
+                    </button>
+                  </div>
+                  <div className="mt-2 flex gap-3 text-[11px] text-slate-400">
+                    {snap.entry_price != null && <span>Entry {formatHarga(snap.entry_price)}</span>}
+                    {snap.tp1 != null && <span>TP1 {formatHarga(snap.tp1)}</span>}
+                    {snap.stop_loss != null && <span>SL {formatHarga(snap.stop_loss)}</span>}
+                  </div>
+                  <p className="text-slate-600 text-[10px] mt-1">
+                    Snapshot statis — disimpan {new Date(row.created_at).toLocaleDateString('id-ID')}
+                  </p>
+                </div>
+              )
+            })}
+        </div>
+      )}
+
+      {tab === 'SAHAM' && (
+      <>
       <div className="mt-4 flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
         {folders.map((f) => {
           const active = f.id === activeFolderId
@@ -394,6 +532,8 @@ export default function WatchlistPage() {
             )
           })}
       </div>
+      </>
+      )}
     </main>
   )
 }
