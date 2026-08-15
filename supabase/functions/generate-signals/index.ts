@@ -6,6 +6,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 const CONCURRENCY = 20
 const SUPPORT_RESISTANCE_LOOKBACK = 20
 const ATR_PERIOD = 14
+const FORMULA_VERSION = 'baseline_v8'
 
 type StockRow = { id: string; ticker: string }
 type CandleRow = { ts: string; open: number; high: number; low: number; close: number; volume: number | null }
@@ -49,17 +50,56 @@ function emaSeries(values: number[], period: number): (number | null)[] {
   return result
 }
 
+// Candlestick Pattern Scoring (dok 9.3.1: Candlestick ±2) -- sebelumnya TIDAK
+// ADA di formula v7. Dipakai berdasarkan 3 candle terakhir yang sudah di-fetch
+// (bukan permintaan tambahan ke provider). WAJIB identik dengan
+// backtest-signals/index.ts supaya hasil backtest valid untuk formula ini.
+function candlestickScore(candles: CandleRow[]): { score: number; label: string } {
+  const n = candles.length
+  if (n < 3) return { score: 0, label: 'data tidak cukup untuk pola candle' }
+  const c0 = candles[n - 3], c1 = candles[n - 2], c2 = candles[n - 1]
+  const body = (c: CandleRow) => Math.abs(c.close - c.open)
+  const range = (c: CandleRow) => c.high - c.low
+  const isBull = (c: CandleRow) => c.close > c.open
+  const isBear = (c: CandleRow) => c.close < c.open
+  const lowerShadow = (c: CandleRow) => Math.min(c.open, c.close) - c.low
+  const upperShadow = (c: CandleRow) => c.high - Math.max(c.open, c.close)
+
+  // Bullish Engulfing
+  if (isBear(c1) && isBull(c2) && c2.open <= c1.close && c2.close >= c1.open && body(c2) > body(c1)) {
+    return { score: 2, label: 'bullish engulfing' }
+  }
+  // Bearish Engulfing
+  if (isBull(c1) && isBear(c2) && c2.open >= c1.close && c2.close <= c1.open && body(c2) > body(c1)) {
+    return { score: -2, label: 'bearish engulfing' }
+  }
+  // Hammer (reversal bullish): shadow bawah >= 2x body, shadow atas kecil, muncul setelah turun
+  if (range(c2) > 0 && lowerShadow(c2) >= 2 * body(c2) && upperShadow(c2) <= body(c2) * 0.5 && c1.close < c0.close) {
+    return { score: 2, label: 'hammer' }
+  }
+  // Shooting Star (reversal bearish)
+  if (range(c2) > 0 && upperShadow(c2) >= 2 * body(c2) && lowerShadow(c2) <= body(c2) * 0.5 && c1.close > c0.close) {
+    return { score: -2, label: 'shooting star' }
+  }
+  // Morning Star (3 candle, reversal bullish)
+  if (isBear(c0) && body(c0) > 0 && body(c1) < body(c0) * 0.5 && isBull(c2) && c2.close > (c0.open + c0.close) / 2) {
+    return { score: 2, label: 'morning star' }
+  }
+  // Evening Star (3 candle, reversal bearish)
+  if (isBull(c0) && body(c0) > 0 && body(c1) < body(c0) * 0.5 && isBear(c2) && c2.close < (c0.open + c0.close) / 2) {
+    return { score: -2, label: 'evening star' }
+  }
+  return { score: 0, label: 'tidak ada pola signifikan' }
+}
+
 function scoreSignal(ind: IndicatorRow, candles: CandleRow[]) {
-  // v7: confluence RSI+MACD (v5) DITAMBAH 3 filter ketat baru, dirancang buat
-  // naikin Win Rate dari v6 (33.5%, cuma breakeven di R:R 1:2) -- v6 lolos
-  // masuk sinyal tiap kali RSI & MACD searah, TANPA peduli entry-nya udah
-  // "telat"/exhausted atau trend-nya beneran nge-gas. v7 nolak 3 kondisi itu:
-  //   1. RSI overbought (>70) -- biasanya udah mau retrace, bukan awal tren.
-  //   2. EMA21 FLAT/TURUN -- confluence RSI+MACD bisa muncul di sideways/
-  //      choppy market, bukan cuma di uptrend beneran. v6 cuma cek ema5>21
-  //      (alignment sesaat), bukan slope (tren bergerak beberapa bar).
-  //   3. Stochastic overbought (>80) -- entry di puncak jangka pendek, rawan
-  //      kena stop out random sebelum sempat lanjut naik.
+  // v8: sama seperti v7 (confluence RSI+MACD+trend EMA21 slope+Stochastic,
+  // filter RSI/Stochastic overbought-oversold) DITAMBAH Candlestick Pattern
+  // Scoring (±2) sesuai dok 9.3.1 yang sebelumnya belum diimplementasikan.
+  //
+  // CATATAN: v7 tidak lolos backtest gate (WR 32.2%, PF 0.96, MaxDD 38.5% --
+  // audit 15 Agustus 2026). v8 WAJIB dibacktest ulang sebelum diaktifkan live
+  // (lihat kolom is_approved di signal_engine_versions + gate check di bawah).
   let score = 0
   const evidence: Record<string, string> = {}
   const lastCandle = candles[candles.length - 1]
@@ -119,6 +159,11 @@ function scoreSignal(ind: IndicatorRow, candles: CandleRow[]) {
     else evidence.volume = 'spike tidak konfirmasi arah'
   } else evidence.volume = 'normal'
 
+  const candle = candlestickScore(candles)
+  if (confluenceBuy && candle.score > 0) { score += candle.score; evidence.candlestick = candle.label }
+  else if (confluenceSell && candle.score < 0) { score += candle.score; evidence.candlestick = candle.label }
+  else evidence.candlestick = candle.label === 'tidak ada pola signifikan' ? candle.label : `${candle.label} (arah berlawanan, diabaikan)`
+
   return { score, evidence }
 }
 
@@ -132,9 +177,12 @@ function isSameWibDay(tsIso: string, now: Date): boolean {
 }
 
 function getExpiry(timeframe: string, now: Date): string {
+  // Jam bursa BEI 2026 (SK Direksi II-A Kep-00003/BEI/04-2025):
+  // Sesi 2 s.d. 15:49, pre-closing 15:50-16:00, post-closing 16:00-16:15.
+  // Harga closing resmi baru final ~16:15 WIB.
   const wibOffsetMs = 7 * 60 * 60 * 1000
   const wibNow = new Date(now.getTime() + wibOffsetMs)
-  const expiryWib = new Date(Date.UTC(wibNow.getUTCFullYear(), wibNow.getUTCMonth(), wibNow.getUTCDate(), 15, 30, 0))
+  const expiryWib = new Date(Date.UTC(wibNow.getUTCFullYear(), wibNow.getUTCMonth(), wibNow.getUTCDate(), 16, 15, 0))
   if (timeframe === 'D1' || timeframe === 'W1') {
     expiryWib.setUTCDate(expiryWib.getUTCDate() + 1)
   }
@@ -156,6 +204,21 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: `timeframe tidak didukung: ${timeframe}` }), { status: 400 })
   }
 
+  // GATE CHECK (dok 1.6 / 9.3.1 / 20.6 / 20.10): formula_version hanya boleh
+  // menghasilkan signal ACTIVE yang tampil ke user kalau sudah tercatat
+  // is_approved=true di signal_engine_versions untuk timeframe ini. Kalau
+  // belum pernah lolos backtest gate, signal TETAP dihitung (untuk keperluan
+  // audit/evidence) tapi TIDAK di-insert sebagai ACTIVE -- mencegah kejadian
+  // v7 yang lolos ke produksi tanpa pernah divalidasi.
+  const { data: gateRow } = await supabase
+    .from('signal_engine_versions')
+    .select('id')
+    .eq('formula_version', FORMULA_VERSION)
+    .eq('timeframe', timeframe)
+    .eq('is_approved', true)
+    .maybeSingle()
+  const gateApproved = !!gateRow
+
   const { data: stocks, error } = await supabase
     .from('stocks')
     .select('id, ticker')
@@ -167,7 +230,7 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: error?.message ?? 'no stocks' }), { status: 500 })
   }
 
-  let totalBuy = 0, totalSell = 0, totalHold = 0, totalSkipped = 0, totalFailed = 0
+  let totalBuy = 0, totalSell = 0, totalHold = 0, totalSkipped = 0, totalFailed = 0, totalBlockedUnapproved = 0
   const debugSamples: Record<string, string> = {}
 
   for (let i = 0; i < stocks.length; i += CONCURRENCY) {
@@ -220,6 +283,8 @@ Deno.serve(async (req: Request) => {
 
       if (!direction) { totalHold++; continue }
 
+      if (!gateApproved) { totalBlockedUnapproved++; continue }
+
       const atr = computeATR(usableCandles)
       if (atr == null) { totalSkipped++; continue }
 
@@ -267,12 +332,12 @@ Deno.serve(async (req: Request) => {
           buy_area_high: buyAreaHigh,
           tp1, tp2,
           stop_loss: stopLoss,
-          risk_reward: 1.5,
+          risk_reward: 2,
           confidence_score: confidence,
           status: 'ACTIVE',
           support_level: support,
           resistance_level: resistance,
-          formula_version: 'baseline_v7',
+          formula_version: FORMULA_VERSION,
           engine_version: 'v1',
           evidence: { score, ...evidence },
           triggered_at: new Date().toISOString(),
@@ -302,8 +367,11 @@ Deno.serve(async (req: Request) => {
   return new Response(
     JSON.stringify({
       timeframe, offset, limit, total: stocks.length,
+      formula_version: FORMULA_VERSION,
+      gate_approved: gateApproved,
       buy: totalBuy, sell: totalSell, hold_no_signal: totalHold,
       skipped_insufficient_data: totalSkipped, failed: totalFailed,
+      blocked_unapproved_formula: totalBlockedUnapproved,
       debug_samples: debugSamples,
     }),
     { headers: { 'Content-Type': 'application/json' } },
