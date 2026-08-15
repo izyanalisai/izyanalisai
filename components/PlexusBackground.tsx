@@ -4,9 +4,17 @@ import { useEffect, useRef } from 'react'
 
 type Density = 'subtle' | 'normal'
 
+// Palet resmi IzyAnalisAi (Dokumen 3.1) — dipakai untuk warna node & garis.
 const PALETTE = ['#3B82F6', '#8B5CF6', '#EC4899', '#F43F5E']
 
-type Node = { x: number; y: number; vx: number; vy: number; r: number; color: string }
+type Node = {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  r: number
+  color: string
+}
 
 const CONFIG: Record<Density, { count: number; maxDist: number; nodeOpacity: number; lineOpacity: number; speed: number }> = {
   subtle: { count: 26, maxDist: 130, nodeOpacity: 0.35, lineOpacity: 0.12, speed: 0.12 },
@@ -52,6 +60,7 @@ export default function PlexusBackground({ density = 'normal' }: { density?: Den
 
     function makeNodes() {
       const area = Math.max(width * height, 1)
+      // Kepadatan menyesuaikan luas kontainer, dibatasi biar tetap ringan di mobile.
       const count = Math.max(10, Math.min(cfg.count, Math.round((area / (480 * 800)) * cfg.count)))
       nodes = Array.from({ length: count }, () => {
         const color = rgbCache[Math.floor(Math.random() * rgbCache.length)]
@@ -70,6 +79,7 @@ export default function PlexusBackground({ density = 'normal' }: { density?: Den
       if (!ctx) return
       ctx.clearRect(0, 0, width, height)
 
+      // Garis penghubung antar node yang berdekatan (efek plexus/network).
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
           const a = nodes[i]
@@ -89,6 +99,7 @@ export default function PlexusBackground({ density = 'normal' }: { density?: Den
         }
       }
 
+      // Titik node.
       for (const n of nodes) {
         ctx.beginPath()
         ctx.fillStyle = `rgba(${n.color},${cfg.nodeOpacity})`
@@ -143,5 +154,11 @@ export default function PlexusBackground({ density = 'normal' }: { density?: Den
     }
   }, [density])
 
-  return <canvas ref={canvasRef} className="absolute inset-0 -z-10 pointer-events-none" aria-hidden="true" />
-}
+  return (
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 -z-10 pointer-events-none"
+      aria-hidden="true"
+    />
+  )
+    }
