@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { User } from '@supabase/supabase-js'
 import { useTheme, useLang, type Lang } from '@/lib/preferences'
+import PlexusBackground from '@/components/PlexusBackground'
 
 type Profile = {
   full_name: string | null
@@ -181,7 +182,8 @@ export default function ProfilPage() {
   const riskLabel = profile?.risk_profile ? RISK_LABELS[profile.risk_profile] : null
 
   return (
-    <main className="min-h-screen bg-[#0F172A] text-white pb-10">
+    <main className="min-h-screen relative overflow-hidden bg-[#0F172A] text-white pb-10">
+      <PlexusBackground density="subtle" />
       <div className="px-4 py-6 max-w-[480px] mx-auto">
         <div className="flex items-center gap-3">
           <div
@@ -319,4 +321,4 @@ export default function ProfilPage() {
       </div>
     </main>
   )
-  }
+    }
