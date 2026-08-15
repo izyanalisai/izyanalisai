@@ -3,6 +3,7 @@
 import { createClient } from '@/lib/supabase/client'
 import { getPostLoginPath } from '@/lib/auth-flow'
 import { useEffect, useState } from 'react'
+import PlexusBackground from '@/components/PlexusBackground'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -49,7 +50,8 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#0F172A] text-white px-4 py-10 max-w-[480px] mx-auto flex flex-col justify-center">
+    <main className="min-h-screen relative overflow-hidden bg-[#0F172A] text-white px-4 py-10 max-w-[480px] mx-auto flex flex-col justify-center">
+      <PlexusBackground density="normal" />
       <h1
         className="text-3xl font-bold bg-clip-text text-transparent mb-8 text-center"
         style={{ backgroundImage: 'linear-gradient(135deg, #0F172A 0%, #3B82F6 25%, #8B5CF6 50%, #EC4899 75%, #F43F5E 100%)' }}
@@ -124,4 +126,4 @@ export default function LoginPage() {
       </p>
     </main>
   )
-}
+            }
