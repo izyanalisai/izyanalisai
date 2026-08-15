@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Header from "@/components/Header";
 import BottomNav from "@/components/BottomNav";
+import RegisterServiceWorker from "@/components/RegisterServiceWorker";
 import { ThemeProvider, LanguageProvider } from "@/lib/preferences";
 
 const geistSans = Geist({
@@ -18,6 +19,14 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "IzyAnalisAi",
   description: "Ingat Saham, Ingat IzyAnalisAi.",
+  manifest: "/manifest.json",
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/icon-192.png",
+  },
 };
 
 export const viewport: Viewport = {
@@ -37,6 +46,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col bg-[var(--background)] text-[var(--foreground)]">
         <ThemeProvider>
           <LanguageProvider>
+            <RegisterServiceWorker />
             <Header />
             <BottomNav />
             <div className="flex-1 pb-20 lg:pb-0 lg:pl-60">{children}</div>
