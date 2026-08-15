@@ -199,39 +199,19 @@ export default function StockDetail({ ticker }: { ticker: string }) {
     setUnlockLoading(false)
   }
 
-  // PENTING: tombol ini baru boleh dipanggil SETELAH iklan rewarded AdMob
-  // benar-benar selesai ditonton (callback onUserEarnedReward dari SDK).
-  // Untuk sekarang RPC dipanggil langsung karena integrasi AdMob (16.2)
-  // belum terpasang — jangan ship ke production sebelum AdMob nyantol
-  // di sini, kalau tidak user bisa unlock gratis tanpa nonton iklan.
-  const handleUnlockAd = async () => {
-    if (!user) {
-      router.push('/login')
-      return
-    }
-    if (!stock) return
-
-    setUnlockLoading(true)
-    setUnlockMsg(null)
-
-    const { error } = await supabase.rpc('unlock_signal_with_ad', { p_stock_id: stock.id })
-
-    if (error) {
-      if (error.message.includes('AD_LIMIT_REACHED')) {
-        setUnlockMsg('Sudah 3x nonton iklan hari ini. Pakai token atau upgrade Premium.')
-      } else if (error.message.includes('PREMIUM_NO_ADS_NEEDED')) {
-        setUnlockMsg('Akun Premium tidak perlu nonton iklan.')
-      } else {
-        setUnlockMsg('Gagal membuka sinyal lewat iklan. Coba lagi.')
-      }
-      setUnlockLoading(false)
-      return
-    }
-
-    await loadSignal(stock.id)
-    await loadWallet()
-    setUnlockLoading(false)
-  }
+  // CATATAN: unlock_signal_with_ad sudah di-REVOKE dari role authenticated di
+  // database (lihat migration fix_signals_paywall_leak_and_harden_rpc dan
+  // revoke_unlock_signal_with_ad_direct_access) supaya tidak ada jalan
+  // unlock gratis tanpa bukti iklan selesai ditonton. Unlock via iklan yang
+  // valid HANYA boleh terjadi lewat alur: SDK AdMod rewarded -> callback
+  // onUserEarnedReward -> Google mengirim Server-Side Verification ke edge
+  // function admob-ssv -> admob-ssv memanggil credit_ad_unlock_verified
+  // (service role only). Sampai SDK AdMob web/native benar-benar terpasang
+  // di halaman ini, tombolnya dinonaktifkan supaya tidak error membingungkan
+  // atau (kalau suatu saat RPC lama ke-restore tanpa sengaja) tidak bisa
+  // dipakai untuk unlock gratis. Jangan sambungkan tombol ini ke RPC
+  // apa pun secara langsung dari client.
+  const adUnlockReady = false
 
   const handleWatchlist = async () => {
     if (!user) {
@@ -479,11 +459,11 @@ export default function StockDetail({ ticker }: { ticker: string }) {
                     {unlockLoading ? 'Memproses...' : 'Lihat Penjelasan Lengkap (1 Token)'}
                   </button>
                   <button
-                    onClick={handleUnlockAd}
-                    disabled={unlockLoading}
-                    className="w-full rounded-xl py-2.5 text-sm font-medium border border-white/10 text-slate-300 disabled:opacity-60"
+                    disabled={!adUnlockReady}
+                    title="Fitur nonton iklan akan aktif setelah integrasi AdMob rampung"
+                    className="w-full rounded-xl py-2.5 text-sm font-medium border border-white/10 text-slate-500 opacity-50 cursor-not-allowed"
                   >
-                    Tonton Iklan untuk Buka
+                    Tonton Iklan untuk Buka (Segera Hadir)
                   </button>
                   {unlockMsg && <p className="text-[#EF4444] text-xs text-center">{unlockMsg}</p>}
                 </div>
