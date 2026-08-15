@@ -30,6 +30,24 @@ type FeatureRequest = {
   created_at: string
 }
 
+type UserRow = {
+  id: string
+  full_name: string | null
+  is_premium: boolean
+  is_admin: boolean
+  is_active: boolean
+  created_at: string
+  subscriptions: { status: string; plan: string; period_end: string | null }[] | null
+}
+
+type ActiveSignal = {
+  id: string
+  direction: string
+  status: string
+  created_at: string
+  stocks: { ticker: string; name: string } | null
+}
+
 const BUG_STATUSES = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'WONT_FIX']
 const FEATURE_STATUSES = ['OPEN', 'PLANNED', 'SHIPPED', 'DECLINED']
 
@@ -49,9 +67,12 @@ export default function AdminPage() {
   const [checking, setChecking] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false)
   const [summary, setSummary] = useState<Summary | null>(null)
-  const [tab, setTab] = useState<'bug' | 'feature'>('bug')
+  const [tab, setTab] = useState<'bug' | 'feature' | 'users' | 'signals'>('bug')
   const [bugReports, setBugReports] = useState<BugReport[]>([])
   const [featureRequests, setFeatureRequests] = useState<FeatureRequest[]>([])
+  const [users, setUsers] = useState<UserRow[]>([])
+  const [activeSignals, setActiveSignals] = useState<ActiveSignal[]>([])
+  const [overridingId, setOverridingId] = useState<string | null>(null)
   const [loadingList, setLoadingList] = useState(false)
 
   const loadSummary = useCallback(async () => {
@@ -80,6 +101,50 @@ export default function AdminPage() {
     setFeatureRequests(data ?? [])
     setLoadingList(false)
   }, [supabase])
+
+  // RLS profiles_select & subscriptions_select sudah mengizinkan admin baca
+  // semua baris (is_current_user_admin()), jadi query langsung aman dipakai.
+  const loadUsers = useCallback(async () => {
+    setLoadingList(true)
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, full_name, is_premium, is_admin, is_active, created_at, subscriptions(status, plan, period_end)')
+      .order('created_at', { ascending: false })
+      .limit(100)
+    setUsers((data as unknown as UserRow[]) ?? [])
+    setLoadingList(false)
+  }, [supabase])
+
+  const loadActiveSignals = useCallback(async () => {
+    setLoadingList(true)
+    const { data } = await supabase
+      .from('signals')
+      .select('id, direction, status, created_at, stocks(ticker, name)')
+      .eq('status', 'ACTIVE')
+      .is('superseded_by', null)
+      .order('created_at', { ascending: false })
+      .limit(100)
+    setActiveSignals((data as unknown as ActiveSignal[]) ?? [])
+    setLoadingList(false)
+  }, [supabase])
+
+  const overrideSignal = async (signalId: string) => {
+    const reason = window.prompt('Alasan override sinyal ini (wajib diisi):')
+    if (!reason || !reason.trim()) return
+
+    setOverridingId(signalId)
+    const { error } = await supabase.rpc('admin_invalidate_signal', {
+      p_signal_id: signalId,
+      p_reason: reason.trim(),
+    })
+    if (error) {
+      window.alert(`Gagal override: ${error.message}`)
+    } else {
+      await loadActiveSignals()
+      await loadSummary()
+    }
+    setOverridingId(null)
+  }
 
   useEffect(() => {
     async function check() {
@@ -112,8 +177,10 @@ export default function AdminPage() {
   useEffect(() => {
     if (!isAdmin) return
     if (tab === 'bug') loadBugReports()
-    else loadFeatureRequests()
-  }, [tab, isAdmin, loadBugReports, loadFeatureRequests])
+    else if (tab === 'feature') loadFeatureRequests()
+    else if (tab === 'users') loadUsers()
+    else if (tab === 'signals') loadActiveSignals()
+  }, [tab, isAdmin, loadBugReports, loadFeatureRequests, loadUsers, loadActiveSignals])
 
   const updateBugStatus = async (id: string, status: string) => {
     await supabase.from('bug_reports').update({ status }).eq('id', id)
@@ -166,6 +233,18 @@ export default function AdminPage() {
           className={`px-4 py-2 rounded-xl text-sm ${tab === 'feature' ? 'bg-white/15' : 'bg-white/5 text-slate-400'}`}
         >
           Ajukan Fitur
+        </button>
+        <button
+          onClick={() => setTab('users')}
+          className={`px-4 py-2 rounded-xl text-sm ${tab === 'users' ? 'bg-white/15' : 'bg-white/5 text-slate-400'}`}
+        >
+          User &amp; Subscription
+        </button>
+        <button
+          onClick={() => setTab('signals')}
+          className={`px-4 py-2 rounded-xl text-sm ${tab === 'signals' ? 'bg-white/15' : 'bg-white/5 text-slate-400'}`}
+        >
+          Sinyal Aktif
         </button>
       </div>
 
@@ -220,6 +299,57 @@ export default function AdminPage() {
           ))}
         </div>
       )}
+
+      {!loadingList && tab === 'users' && (
+        <div className="space-y-2">
+          {users.length === 0 && <p className="text-slate-500 text-sm">Belum ada user.</p>}
+          {users.map((u) => {
+            const sub = u.subscriptions?.[0]
+            return (
+              <div key={u.id} className="rounded-xl bg-white/5 border border-white/10 px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-slate-200">{u.full_name || '(tanpa nama)'}</p>
+                  <div className="flex gap-1.5">
+                    {u.is_admin && <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#8B5CF6]/20 text-[#8B5CF6]">Admin</span>}
+                    {u.is_premium && <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#F43F5E]/20 text-[#F43F5E]">Premium</span>}
+                    {!u.is_active && <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-slate-400">Nonaktif</span>}
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Daftar {new Date(u.created_at).toLocaleDateString('id-ID')}
+                  {sub && ` · Subscription: ${sub.plan} (${sub.status})`}
+                  {sub?.period_end && ` · berakhir ${new Date(sub.period_end).toLocaleDateString('id-ID')}`}
+                </p>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {!loadingList && tab === 'signals' && (
+        <div className="space-y-2">
+          {activeSignals.length === 0 && <p className="text-slate-500 text-sm">Tidak ada sinyal aktif.</p>}
+          {activeSignals.map((s) => (
+            <div key={s.id} className="rounded-xl bg-white/5 border border-white/10 px-4 py-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold">{s.stocks?.ticker} <span className="text-slate-500 font-normal">{s.stocks?.name}</span></p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {s.direction} · dibuat {new Date(s.created_at).toLocaleString('id-ID')}
+                  </p>
+                </div>
+                <button
+                  onClick={() => overrideSignal(s.id)}
+                  disabled={overridingId === s.id}
+                  className="text-xs px-3 py-1.5 rounded-lg border border-[#EF4444]/40 text-[#EF4444] hover:bg-[#EF4444]/10 disabled:opacity-50"
+                >
+                  {overridingId === s.id ? 'Memproses...' : 'Override'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </main>
   )
-}
+                                          }
