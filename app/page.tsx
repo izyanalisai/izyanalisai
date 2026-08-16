@@ -20,11 +20,16 @@ type StockRow = {
 type SignalRow = {
   id: string
   direction: 'BUY' | 'SELL'
-  confidence_score: number | null
+  signal_tier: 'daily' | 'swing'
   timeframe: string | null
   created_at: string
   stock_id: string
   stocks: { ticker: string; name: string } | null
+}
+
+const tierLabel: Record<string, string> = {
+  daily: 'Daily',
+  swing: 'Swing',
 }
 
 type EconEvent = { id: string; event_name: string; country: string; event_date: string; impact: string | null }
@@ -168,7 +173,7 @@ export default function Home() {
             .eq('is_active', true),
           supabase
             .from('signals_public')
-            .select('id, direction, timeframe, created_at, stock_id')
+            .select('id, direction, signal_tier, timeframe, created_at, stock_id')
             .eq('status', 'ACTIVE')
             .is('superseded_by', null)
             .order('created_at', { ascending: false })
@@ -369,9 +374,14 @@ export default function Home() {
                   <p className="text-sm font-semibold">{s.stocks?.ticker}</p>
                   <p className="text-[11px] text-slate-500">{s.stocks?.name}</p>
                 </div>
-                <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${style.bg} ${style.text}`}>
-                  {s.direction}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-medium px-2 py-1 rounded-full border border-white/10 text-slate-300">
+                    {tierLabel[s.signal_tier] ?? s.signal_tier}
+                  </span>
+                  <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${style.bg} ${style.text}`}>
+                    {s.direction}
+                  </span>
+                </div>
               </Link>
             )
           })}
@@ -474,4 +484,4 @@ export default function Home() {
       </section>
     </main>
   )
-            }
+}
