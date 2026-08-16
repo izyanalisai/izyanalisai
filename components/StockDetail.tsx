@@ -23,19 +23,23 @@ type Quote = {
   updated_at: string | null
 }
 
+type SignalTier = 'daily' | 'swing'
+
 type SignalRpcResult = {
   id: string
   direction: 'BUY' | 'SELL'
   status: string
+  signal_tier: SignalTier
   created_at: string
   unlocked: boolean
   entry_price?: number | null
   buy_area_low?: number | null
   buy_area_high?: number | null
+  support_level?: number | null
+  resistance_level?: number | null
   tp1?: number | null
   tp2?: number | null
   stop_loss?: number | null
-  confidence_score?: number | null
   ai_reasoning?: { teknikal?: string; fundamental?: string; makro?: string } | null
 }
 
@@ -47,6 +51,11 @@ type Wallet = {
 const directionStyle: Record<string, { bg: string; text: string; label: string }> = {
   BUY: { bg: 'bg-[#22C55E]/15', text: 'text-[#22C55E]', label: 'BUY' },
   SELL: { bg: 'bg-[#EF4444]/15', text: 'text-[#EF4444]', label: 'SELL' },
+}
+
+const tierLabel: Record<SignalTier, string> = {
+  daily: 'Daily',
+  swing: 'Swing',
 }
 
 function formatHarga(n: number | null | undefined) {
@@ -83,6 +92,7 @@ export default function StockDetail({ ticker }: { ticker: string }) {
   const [stock, setStock] = useState<Stock | null>(null)
   const [quote, setQuote] = useState<Quote | null>(null)
   const [signal, setSignal] = useState<SignalRpcResult | null>(null)
+  const [signalTier, setSignalTier] = useState<SignalTier>('daily')
   const [wallet, setWallet] = useState<Wallet | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -95,8 +105,8 @@ export default function StockDetail({ ticker }: { ticker: string }) {
   const [unlockMsg, setUnlockMsg] = useState<string | null>(null)
   const [showChartUpload, setShowChartUpload] = useState(false)
 
-  const loadSignal = useCallback(async (stockId: string) => {
-    const { data, error } = await supabase.rpc('get_signal_for_stock', { p_stock_id: stockId })
+  const loadSignal = useCallback(async (stockId: string, tier: SignalTier) => {
+    const { data, error } = await supabase.rpc('get_signal_for_stock', { p_stock_id: stockId, p_tier: tier })
     if (!error) setSignal(data as SignalRpcResult | null)
   }, [supabase])
 
@@ -136,7 +146,7 @@ export default function StockDetail({ ticker }: { ticker: string }) {
 
       if (active) setQuote(quoteData)
 
-      await loadSignal(stockData.id)
+      await loadSignal(stockData.id, signalTier)
 
       if (userData.user) {
         await loadWallet()
@@ -167,6 +177,14 @@ export default function StockDetail({ ticker }: { ticker: string }) {
     }
   }, [ticker])
 
+  // Reload sinyal saat user toggle Daily/Swing (dokumen 6.2: keduanya
+  // berjalan independen, saham bisa punya sinyal di kedua tier sekaligus).
+  useEffect(() => {
+    if (stock) {
+      loadSignal(stock.id, signalTier)
+    }
+  }, [signalTier, stock, loadSignal])
+
   const handleUnlockToken = async () => {
     if (!user) {
       router.push('/login')
@@ -194,7 +212,7 @@ export default function StockDetail({ ticker }: { ticker: string }) {
     }
 
     void data
-    await loadSignal(stock.id)
+    await loadSignal(stock.id, signalTier)
     await loadWallet()
     setUnlockLoading(false)
   }
@@ -366,8 +384,24 @@ export default function StockDetail({ ticker }: { ticker: string }) {
             )}
           </div>
 
+          <div className="flex gap-2 mb-3">
+            {(['daily', 'swing'] as SignalTier[]).map((t) => (
+              <button
+                key={t}
+                onClick={() => setSignalTier(t)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors duration-200 ${
+                  signalTier === t
+                    ? 'bg-[#8B5CF6]/20 border-[#8B5CF6] text-white'
+                    : 'border-white/10 text-slate-400'
+                }`}
+              >
+                {tierLabel[t]}
+              </button>
+            ))}
+          </div>
+
           {!signal && (
-            <p className="text-slate-500 text-sm">Belum ada sinyal aktif untuk {stock.ticker}.</p>
+            <p className="text-slate-500 text-sm">Belum ada sinyal {tierLabel[signalTier]} aktif untuk {stock.ticker}.</p>
           )}
 
           {signal && (
@@ -405,15 +439,20 @@ export default function StockDetail({ ticker }: { ticker: string }) {
               </div>
 
               {locked ? (
-                <LockedField label="Confidence" />
+                <div className="grid grid-cols-2 gap-2">
+                  <LockedField label="Support" />
+                  <LockedField label="Resistance" />
+                </div>
               ) : (
-                <div className="rounded-lg bg-white/5 px-3 py-2 text-sm">
-                  <p className="text-slate-500 text-xs">Confidence</p>
-                  <p className="font-medium">
-                    {signal.confidence_score !== null && signal.confidence_score !== undefined
-                      ? `${signal.confidence_score}%`
-                      : 'Data belum cukup'}
-                  </p>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-lg bg-white/5 px-3 py-2">
+                    <p className="text-slate-500 text-xs">Support</p>
+                    <p className="font-medium">{formatHarga(signal.support_level)}</p>
+                  </div>
+                  <div className="rounded-lg bg-white/5 px-3 py-2">
+                    <p className="text-slate-500 text-xs">Resistance</p>
+                    <p className="font-medium">{formatHarga(signal.resistance_level)}</p>
+                  </div>
                 </div>
               )}
 
