@@ -10,7 +10,13 @@ const FREE_MODELS = [
   'google/gemma-4-26b-a4b-it:free',
 ]
 
-const SYSTEM_PROMPT = 'Kamu menjelaskan alasan sinyal saham berdasarkan evidence struktur harga (support/resistance, struktur swing, EMA) yang diberikan. JANGAN pernah menyebut/mengubah angka Buy Area, SL, TP, atau membuat klaim statistik apapun (win rate, probabilitas, confidence) -- angka sudah fix dari engine dan sinyal ini bukan berbasis statistik. Tulis 2-4 kalimat bahasa Indonesia santai, jelasin kenapa struktur harga di timeframe-timeframe terkait mendukung arah sinyalnya.'
+const SYSTEM_PROMPT = `Kamu menjelaskan alasan sinyal saham berdasarkan evidence struktur harga (support/resistance, struktur swing, EMA) yang diberikan.
+
+ATURAN YANG HARUS DIPATUHI:
+- JANGAN pernah menyebut/mengubah angka Buy Area, SL, TP, atau membuat klaim statistik apapun (win rate, probabilitas, confidence) -- angka sudah fix dari engine.
+- Jika ada "Katalis Berita" di evidence, sebutkan secara singkat sebagai pendukung, tapi tetap tekankan bahwa keputusan utama berdasarkan struktur harga.
+- Tulis 2-4 kalimat bahasa Indonesia santai, jelasin kenapa struktur harga di timeframe-timeframe terkait mendukung arah sinyalnya.
+- JANGAN pernah menulis "Berdasarkan analisis saya" atau "Menurut saya" — tulis seolah-olah ini adalah kesimpulan dari engine.`
 
 function sanitizeReply(raw: string): string {
   let text = raw.trim()
@@ -43,29 +49,56 @@ async function callOpenRouter(prompt: string, apiKey: string) {
           max_tokens: 300,
         }),
       })
-      if (res.status === 429 || res.status === 402 || !res.ok) { lastError = await res.text(); continue }
+      if (res.status === 429 || res.status === 402 || !res.ok) {
+        lastError = await res.text()
+        continue
+      }
       const data = await res.json()
       const rawText = data?.choices?.[0]?.message?.content ?? ''
       const text = sanitizeReply(rawText)
-      if (!text) { lastError = 'response kosong setelah sanitize'; continue }
-      return { text, modelUsed: model, usage: { input: data?.usage?.prompt_tokens ?? 0, output: data?.usage?.completion_tokens ?? 0 } }
-    } catch (err) { lastError = err; continue }
+      if (!text) {
+        lastError = 'response kosong setelah sanitize'
+        continue
+      }
+      return {
+        text,
+        modelUsed: model,
+        usage: {
+          input: data?.usage?.prompt_tokens ?? 0,
+          output: data?.usage?.completion_tokens ?? 0,
+        },
+      }
+    } catch (err) {
+      lastError = err
+      continue
+    }
   }
   throw new Error(`Semua model gratis gagal: ${JSON.stringify(lastError)}`)
 }
 
 Deno.serve(async (req: Request) => {
-  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  )
 
   const providedSecret = req.headers.get('x-worker-secret')
-  const { data: secretRow } = await supabase.from('internal_secrets').select('value').eq('key', 'worker_shared_secret').maybeSingle()
+  const { data: secretRow } = await supabase
+    .from('internal_secrets')
+    .select('value')
+    .eq('key', 'worker_shared_secret')
+    .maybeSingle()
+
   if (!providedSecret || !secretRow || providedSecret !== secretRow.value) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
   }
 
   const apiKey = Deno.env.get('OPENROUTER_API_KEY')
   if (!apiKey) {
-    return new Response(JSON.stringify({ error: 'OPENROUTER_API_KEY belum di-set di Supabase Secrets' }), { status: 500 })
+    return new Response(
+      JSON.stringify({ error: 'OPENROUTER_API_KEY belum di-set di Supabase Secrets' }),
+      { status: 500 }
+    )
   }
 
   const url = new URL(req.url)
@@ -74,7 +107,11 @@ Deno.serve(async (req: Request) => {
 
   const { data: signals, error } = await supabase
     .from('signals')
-    .select('id, direction, entry_price, buy_area_low, buy_area_high, tp1, tp2, stop_loss, support_level, resistance_level, evidence, signal_tier, entry_timeframe, confirm_timeframe, bias_timeframe, stock_id, stocks(ticker, name)')
+    .select(
+      `id, direction, entry_price, buy_area_low, buy_area_high, tp1, tp2, stop_loss, 
+       support_level, resistance_level, evidence, signal_tier, entry_timeframe, 
+       confirm_timeframe, bias_timeframe, stock_id, stocks(ticker, name)`
+    )
     .eq('status', 'ACTIVE')
     .is('ai_reasoning', null)
     .order('created_at', { ascending: false })
@@ -84,7 +121,8 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: error.message }), { status: 500 })
   }
 
-  let success = 0, failed = 0
+  let success = 0,
+    failed = 0
   const debugSamples: Record<string, string> = {}
 
   for (const s of signals ?? []) {
@@ -94,12 +132,44 @@ Deno.serve(async (req: Request) => {
       const tfChain = s.confirm_timeframe
         ? `${s.entry_timeframe} -> ${s.confirm_timeframe} -> ${s.bias_timeframe}`
         : `${s.entry_timeframe} -> ${s.bias_timeframe}`
-      const prompt = `Ticker: ${ticker}\nTier: ${tierLabel} (confluence ${tfChain})\nArah: ${s.direction}\nEntry: ${s.entry_price}\nBuy Area: ${s.buy_area_low} - ${s.buy_area_high}\nSupport: ${s.support_level}, Resistance: ${s.resistance_level}\nTP1: ${s.tp1}, TP2: ${s.tp2}\nStop Loss: ${s.stop_loss}\nEvidence struktur: ${JSON.stringify(s.evidence)}`
+
+      // 👇 [TAMBAHAN] Ambil catalyst dari evidence
+      const ev = s.evidence as any
+      let catalystText = ''
+      if (ev?.catalyst && ev.catalyst.has_catalyst) {
+        catalystText = `\n\n📰 KATALIS BERITA POSITIF:\n- ${ev.catalyst.summary}\n- Sumber: ${ev.catalyst.source}\n- Waktu: ${new Date(ev.catalyst.published_at).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`
+      }
+
+      const prompt = `Ticker: ${ticker}
+Tier: ${tierLabel} (confluence ${tfChain})
+Arah: ${s.direction}
+Entry: ${s.entry_price}
+Buy Area: ${s.buy_area_low} - ${s.buy_area_high}
+Support: ${s.support_level}, Resistance: ${s.resistance_level}
+TP1: ${s.tp1}, TP2: ${s.tp2}
+Stop Loss: ${s.stop_loss}
+Evidence struktur: ${JSON.stringify(s.evidence)}${catalystText}`
 
       const { text, modelUsed, usage } = await callOpenRouter(prompt, apiKey)
 
-      await supabase.from('signals').update({ ai_reasoning: { text, model: modelUsed, generated_at: new Date().toISOString() } }).eq('id', s.id)
-      await supabase.from('ai_usage').insert({ worker: 'generate-signal-reasoning', model: modelUsed, tokens_input: usage.input, tokens_output: usage.output, reference_id: s.id } as never)
+      await supabase
+        .from('signals')
+        .update({
+          ai_reasoning: {
+            text,
+            model: modelUsed,
+            generated_at: new Date().toISOString(),
+          },
+        })
+        .eq('id', s.id)
+
+      await supabase.from('ai_usage').insert({
+        worker: 'generate-signal-reasoning',
+        model: modelUsed,
+        tokens_input: usage.input,
+        tokens_output: usage.output,
+        reference_id: s.id,
+      } as never)
 
       success++
     } catch (err) {
@@ -108,7 +178,18 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  return new Response(JSON.stringify({ offset, limit, processed: (signals ?? []).length, success, failed, debug_samples: debugSamples }), {
-    status: 200, headers: { 'Content-Type': 'application/json' },
-  })
+  return new Response(
+    JSON.stringify({
+      offset,
+      limit,
+      processed: (signals ?? []).length,
+      success,
+      failed,
+      debug_samples: debugSamples,
+    }),
+    {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }
+  )
 })
