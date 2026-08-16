@@ -10,7 +10,7 @@ const FREE_MODELS = [
   'google/gemma-4-26b-a4b-it:free',
 ]
 
-const SYSTEM_PROMPT = 'Kamu menjelaskan alasan sinyal saham berdasarkan evidence teknikal yang diberikan. JANGAN pernah menyebut/mengubah angka Buy Area, SL, TP, RR, atau Confidence -- itu sudah fix dari engine. Tulis 2-4 kalimat bahasa Indonesia santai, jelasin kenapa indikator2 itu mendukung arah sinyalnya.'
+const SYSTEM_PROMPT = 'Kamu menjelaskan alasan sinyal saham berdasarkan evidence struktur harga (support/resistance, struktur swing, EMA) yang diberikan. JANGAN pernah menyebut/mengubah angka Buy Area, SL, TP, atau membuat klaim statistik apapun (win rate, probabilitas, confidence) -- angka sudah fix dari engine dan sinyal ini bukan berbasis statistik. Tulis 2-4 kalimat bahasa Indonesia santai, jelasin kenapa struktur harga di timeframe-timeframe terkait mendukung arah sinyalnya.'
 
 function sanitizeReply(raw: string): string {
   let text = raw.trim()
@@ -74,7 +74,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: signals, error } = await supabase
     .from('signals')
-    .select('id, direction, entry_price, buy_area_low, buy_area_high, tp1, tp2, stop_loss, risk_reward, confidence_score, evidence, timeframe, stock_id, stocks(ticker, name)')
+    .select('id, direction, entry_price, buy_area_low, buy_area_high, tp1, tp2, stop_loss, support_level, resistance_level, evidence, signal_tier, entry_timeframe, confirm_timeframe, bias_timeframe, stock_id, stocks(ticker, name)')
     .eq('status', 'ACTIVE')
     .is('ai_reasoning', null)
     .order('created_at', { ascending: false })
@@ -90,7 +90,11 @@ Deno.serve(async (req: Request) => {
   for (const s of signals ?? []) {
     try {
       const ticker = (s as any).stocks?.ticker ?? s.stock_id
-      const prompt = `Ticker: ${ticker}\nTimeframe: ${s.timeframe}\nArah: ${s.direction}\nEntry: ${s.entry_price}\nBuy Area: ${s.buy_area_low} - ${s.buy_area_high}\nTP1: ${s.tp1}, TP2: ${s.tp2}\nStop Loss: ${s.stop_loss}\nRisk/Reward: ${s.risk_reward}\nConfidence: ${s.confidence_score}\nEvidence teknikal: ${JSON.stringify(s.evidence)}`
+      const tierLabel = s.signal_tier === 'swing' ? 'Swing' : 'Daily'
+      const tfChain = s.confirm_timeframe
+        ? `${s.entry_timeframe} -> ${s.confirm_timeframe} -> ${s.bias_timeframe}`
+        : `${s.entry_timeframe} -> ${s.bias_timeframe}`
+      const prompt = `Ticker: ${ticker}\nTier: ${tierLabel} (confluence ${tfChain})\nArah: ${s.direction}\nEntry: ${s.entry_price}\nBuy Area: ${s.buy_area_low} - ${s.buy_area_high}\nSupport: ${s.support_level}, Resistance: ${s.resistance_level}\nTP1: ${s.tp1}, TP2: ${s.tp2}\nStop Loss: ${s.stop_loss}\nEvidence struktur: ${JSON.stringify(s.evidence)}`
 
       const { text, modelUsed, usage } = await callOpenRouter(prompt, apiKey)
 
