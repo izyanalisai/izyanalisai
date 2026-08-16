@@ -8,6 +8,7 @@ type SignalRow = {
   id: string
   direction: 'BUY' | 'SELL'
   status: 'ACTIVE' | 'HIT_TP1'
+  signal_tier: 'daily' | 'swing'
   created_at: string
   stock_id: string
   ticker: string
@@ -15,25 +16,35 @@ type SignalRow = {
   entry_price: number | null
   buy_area_low: number | null
   buy_area_high: number | null
+  support_level: number | null
+  resistance_level: number | null
   tp1: number | null
   tp2: number | null
   stop_loss: number | null
-  confidence_score: number | null
   current_price: number | null
   unlocked: boolean
 }
 
-type FilterValue = 'ALL' | 'BUY' | 'SELL'
+// Dokumen 5.5: filter Semua, BUY, SELL, Daily, Swing. "Daily"/"Swing" di
+// sini adalah signal_tier (dikirim ke RPC via p_tier), bukan direction.
+type FilterValue = 'ALL' | 'BUY' | 'SELL' | 'daily' | 'swing'
 
 const directionStyle: Record<string, { bg: string; text: string }> = {
   BUY: { bg: 'bg-[#22C55E]/15', text: 'text-[#22C55E]' },
   SELL: { bg: 'bg-[#EF4444]/15', text: 'text-[#EF4444]' },
 }
 
+const tierLabel: Record<string, string> = {
+  daily: 'Daily',
+  swing: 'Swing',
+}
+
 const FILTERS: { value: FilterValue; label: string }[] = [
   { value: 'ALL', label: 'Semua' },
   { value: 'BUY', label: 'BUY' },
   { value: 'SELL', label: 'SELL' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'swing', label: 'Swing' },
 ]
 
 function formatHarga(n: number | null | undefined) {
@@ -132,8 +143,10 @@ export default function SignalPage() {
   const filtered = useMemo(() => {
     let list = signals
 
-    if (filter !== 'ALL') {
+    if (filter === 'BUY' || filter === 'SELL') {
       list = list.filter((s) => s.direction === filter)
+    } else if (filter === 'daily' || filter === 'swing') {
+      list = list.filter((s) => s.signal_tier === filter)
     }
 
     if (query) {
@@ -207,6 +220,8 @@ export default function SignalPage() {
       s.tp1 != null ? `TP1: ${formatHarga(s.tp1)}` : null,
       s.tp2 != null ? `TP2: ${formatHarga(s.tp2)}` : null,
       s.stop_loss != null ? `Stop Loss: ${formatHarga(s.stop_loss)}` : null,
+      s.support_level != null ? `Support: ${formatHarga(s.support_level)}` : null,
+      s.resistance_level != null ? `Resistance: ${formatHarga(s.resistance_level)}` : null,
       'DYOR - bukan jaminan profit.',
     ]
       .filter(Boolean)
@@ -293,11 +308,16 @@ export default function SignalPage() {
                       <p className="text-slate-400 text-xs truncate">{s.name}</p>
                     </div>
 
-                    <span
-                      className={`shrink-0 text-xs font-bold px-3 py-1 rounded-full ml-2 ${dir.bg} ${dir.text}`}
-                    >
-                      {s.direction}
-                    </span>
+                    <div className="shrink-0 flex items-center gap-1.5 ml-2">
+                      <span className="text-[10px] font-medium px-2 py-1 rounded-full border border-white/10 text-slate-300">
+                        {tierLabel[s.signal_tier] ?? s.signal_tier}
+                      </span>
+                      <span
+                        className={`text-xs font-bold px-3 py-1 rounded-full ${dir.bg} ${dir.text}`}
+                      >
+                        {s.direction}
+                      </span>
+                    </div>
                   </div>
 
                   {/* Progress Bar — dokumen 6.4 */}
@@ -320,13 +340,16 @@ export default function SignalPage() {
                         {s.tp2 != null && <span>TP2: <span className="text-[#22C55E] font-medium">{formatHarga(s.tp2)}</span></span>}
                         {s.stop_loss != null && <span>SL: <span className="text-[#EF4444] font-medium">{formatHarga(s.stop_loss)}</span></span>}
                       </div>
-                      {s.confidence_score != null && (
-                        <p className="text-slate-500">Confidence: {s.confidence_score}%</p>
+                      {(s.support_level != null || s.resistance_level != null) && (
+                        <div className="flex gap-3 text-slate-500">
+                          {s.support_level != null && <span>Support: {formatHarga(s.support_level)}</span>}
+                          {s.resistance_level != null && <span>Resistance: {formatHarga(s.resistance_level)}</span>}
+                        </div>
                       )}
                     </div>
                   ) : (
                     <p className="text-slate-500 text-xs mt-2">
-                      Buy Area, TP, SL & Confidence terkunci
+                      Buy Area, TP, SL, Support & Resistance terkunci
                     </p>
                   )}
                 </Link>
@@ -378,4 +401,4 @@ export default function SignalPage() {
       </div>
     </main>
   )
-  }
+}
