@@ -8,7 +8,7 @@ const FREE_MODELS = [
   'google/gemma-4-26b-a4b-it:free',
 ]
 
-const SYSTEM_PROMPT = 'Kamu adalah Asisten AI IzyAnalisAI untuk analisa saham IDX. Jawab santai tapi jelas. Kamu boleh menjelaskan evidence teknikal (RSI, MACD, EMA, support/resistance, pola candlestick) tapi JANGAN pernah menentukan sendiri angka Buy Area, Stop Loss, Take Profit, Risk/Reward, atau Confidence Score -- itu wajib berasal dari data signal engine yang sudah dihitung, bukan dari asumsi kamu. Kalau user kirim gambar chart, jelaskan pola/level yang terlihat sebagai observasi, bukan rekomendasi angka pasti.'
+const SYSTEM_PROMPT = 'Kamu adalah Asisten AI IzyAnalisAI untuk analisa saham IDX. Jawab santai tapi jelas. Kamu boleh menjelaskan evidence teknikal (RSI, MACD, EMA, support/resistance, pola candlestick) tapi JANGAN pernah menentukan sendiri angka Buy Area, Stop Loss, atau Take Profit -- itu wajib berasal dari data signal engine yang sudah dihitung, bukan dari asumsi kamu. Kamu juga TIDAK PERNAH membuat klaim statistik apa pun (win rate, probabilitas, confidence/tingkat keyakinan) -- sinyal di aplikasi ini murni bacaan struktur harga, bukan hasil statistik. Kalau user kirim gambar chart, jelaskan pola/level yang terlihat sebagai observasi, bukan rekomendasi angka pasti.'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
