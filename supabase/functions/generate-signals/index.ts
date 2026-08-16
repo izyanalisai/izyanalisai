@@ -211,6 +211,33 @@ Deno.serve(async (req: Request) => {
         totalNoConfluence++
         continue
       }
+
+      // ============================================
+      // [TAMBAHAN] CEK BERITA KATALIS DALAM 24 JAM
+      // ============================================
+
+      // Cari berita positif untuk saham ini dalam 24 jam terakhir
+      const { data: catalystNews, error: newsErr } = await supabase
+        .from('news')
+        .select('summary, sentiment, source, published_at')
+        .contains('mapped_tickers', [stock.ticker])
+        .eq('sentiment', 'positive')
+        .gte('published_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .order('published_at', { ascending: false })
+        .limit(1)
+
+      let catalystEvidence = null
+      if (catalystNews && catalystNews.length > 0) {
+        catalystEvidence = {
+          has_catalyst: true,
+          summary: catalystNews[0].summary || catalystNews[0].title || '',
+          source: catalystNews[0].source,
+          published_at: catalystNews[0].published_at,
+        }
+      }
+
+      // ============================================
+
       const direction: 'BUY' | 'SELL' = allBullish ? 'BUY' : 'SELL'
       const entryPrice = structEntry.lastClose
 
@@ -293,6 +320,7 @@ Deno.serve(async (req: Request) => {
             bias_timeframe: cfg.biasTf,
             direction_basis: 'swing_structure(HH-HL/LH-LL) + EMA21_vs_EMA50',
             tp_source: tpSource,
+            catalyst: catalystEvidence, // <-- TAMBAHKAN INI
           },
           triggered_at: now.toISOString(),
           expires_at: getExpiry(cfg.tier, now),
