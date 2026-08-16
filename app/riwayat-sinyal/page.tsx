@@ -10,11 +10,11 @@ type HistoryItem = {
   stock_name: string
   direction: 'BUY' | 'SELL'
   timeframe: string
+  signal_tier: 'daily' | 'swing'
   status: string
   created_at: string
   resolved_at: string | null
   result: 'WIN' | 'LOSS' | 'BREAKEVEN' | 'INVALID' | null
-  r_multiple: number | null
   unlocked: boolean
   entry_price: number | null
   tp1: number | null
@@ -22,14 +22,21 @@ type HistoryItem = {
   stop_loss: number | null
 }
 
-type Stats = {
-  total_trades: number
-  wins: number
-  losses: number
-  breakeven: number
-  win_rate: number | null
-  avg_r: number
+// Catatan: result (WIN/LOSS/dst) di sini murni status akhir sinyal
+// tersebut sendiri, bukan agregat performa. Win Rate / Avg R gabungan
+// sengaja TIDAK ditampilkan ke user (dokumen 10.6-10.7 & 22.7) — itu
+// dashboard internal tim, bukan fitur produk.
+
+const tierLabel: Record<string, string> = {
+  daily: 'Daily',
+  swing: 'Swing',
 }
+
+const TIER_FILTERS: { value: '' | 'daily' | 'swing'; label: string }[] = [
+  { value: '', label: 'Semua Tier' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'swing', label: 'Swing' },
+]
 
 const STATUS_FILTERS = [
   { value: '', label: 'Semua' },
@@ -60,26 +67,23 @@ const RESULT_COLOR: Record<string, string> = {
 export default function RiwayatSinyalPage() {
   const supabase = createClient()
   const [items, setItems] = useState<HistoryItem[]>([])
-  const [stats, setStats] = useState<Stats | null>(null)
   const [statusFilter, setStatusFilter] = useState('')
+  const [tierFilter, setTierFilter] = useState<'' | 'daily' | 'swing'>('')
   const [periodFilter, setPeriodFilter] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [{ data: historyData }, { data: statsData }] = await Promise.all([
-      supabase.rpc('get_signal_history', {
-        p_status: statusFilter || null,
-        p_days: periodFilter,
-        p_limit: 50,
-        p_offset: 0,
-      }),
-      supabase.rpc('get_signal_history_stats', { p_days: periodFilter }),
-    ])
+    const { data: historyData } = await supabase.rpc('get_signal_history', {
+      p_status: statusFilter || null,
+      p_tier: tierFilter || null,
+      p_days: periodFilter,
+      p_limit: 50,
+      p_offset: 0,
+    })
     setItems((historyData as HistoryItem[]) ?? [])
-    setStats(statsData as Stats)
     setLoading(false)
-  }, [supabase, statusFilter, periodFilter])
+  }, [supabase, statusFilter, tierFilter, periodFilter])
 
   useEffect(() => {
     load()
@@ -92,25 +96,21 @@ export default function RiwayatSinyalPage() {
         <h1 className="text-xl font-bold">Riwayat Sinyal</h1>
       </div>
 
-      {stats && (
-        <div className="grid grid-cols-3 gap-2 mb-4">
-          <div className="rounded-xl bg-white/5 border border-white/10 p-3 text-center">
-            <p className="text-[10px] text-slate-500">Win Rate</p>
-            <p className="text-lg font-bold mt-0.5">
-              {stats.win_rate !== null ? `${stats.win_rate}%` : '-'}
-            </p>
-          </div>
-          <div className="rounded-xl bg-white/5 border border-white/10 p-3 text-center">
-            <p className="text-[10px] text-slate-500">Total Trade</p>
-            <p className="text-lg font-bold mt-0.5">{stats.total_trades}</p>
-          </div>
-          <div className="rounded-xl bg-white/5 border border-white/10 p-3 text-center">
-            <p className="text-[10px] text-slate-500">Avg R</p>
-            <p className="text-lg font-bold mt-0.5">{stats.avg_r}</p>
-          </div>
-        </div>
-      )}
-
+      <div className="flex gap-2 overflow-x-auto pb-2 mb-2">
+        {TIER_FILTERS.map((f) => (
+          <button
+            key={f.label}
+            onClick={() => setTierFilter(f.value)}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs border ${
+              tierFilter === f.value
+                ? 'bg-[#8B5CF6]/20 border-[#8B5CF6] text-white'
+                : 'border-white/10 text-slate-400'
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
       <div className="flex gap-2 overflow-x-auto pb-1 mb-2">
         {STATUS_FILTERS.map((f) => (
           <button
@@ -153,7 +153,7 @@ export default function RiwayatSinyalPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold">
-                  {it.ticker} <span className="text-slate-500 font-normal">· {it.timeframe}</span>
+                  {it.ticker} <span className="text-slate-500 font-normal">· {tierLabel[it.signal_tier] ?? it.signal_tier} · {it.timeframe}</span>
                 </p>
                 <p className="text-[11px] text-slate-500">{it.stock_name}</p>
               </div>
@@ -161,9 +161,6 @@ export default function RiwayatSinyalPage() {
                 <p className={`text-xs font-semibold ${RESULT_COLOR[it.result ?? ''] ?? 'text-slate-400'}`}>
                   {it.result ?? it.status}
                 </p>
-                {it.r_multiple !== null && (
-                  <p className="text-[10px] text-slate-500">{it.r_multiple > 0 ? '+' : ''}{it.r_multiple}R</p>
-                )}
               </div>
             </div>
 
@@ -192,4 +189,4 @@ export default function RiwayatSinyalPage() {
       </div>
     </main>
   )
-                  }
+  }
