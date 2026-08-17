@@ -6,10 +6,10 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 
 // Sumber berita lokal (Berita Indo API - GRATIS & TANPA BATAS)
 const LOCAL_SOURCES = [
-  { name: 'CNN', url: 'https://berita-indo-api.vercel.app/v1/cnn-news' },
-  { name: 'CNBC', url: 'https://berita-indo-api.vercel.app/v1/cnbc-news' },
-  { name: 'Tempo', url: 'https://berita-indo-api.vercel.app/v1/tempo-news' },
-  { name: 'Antara', url: 'https://berita-indo-api.vercel.app/v1/antara-news' },
+  { name: 'CNN', url: 'https://berita-indo-api-next.vercel.app/v1/cnn-news' },
+  { name: 'CNBC', url: 'https://berita-indo-api-next.vercel.app/v1/cnbc-news' },
+  { name: 'Tempo', url: 'https://berita-indo-api-next.vercel.app/v1/tempo-news' },
+  { name: 'Antara', url: 'https://berita-indo-api-next.vercel.app/v1/antara-news' },
 ]
 
 // Sumber berita global (GNews - 100 request/hari gratis)
@@ -251,7 +251,7 @@ async function fetchGlobalSource(apiKey: string) {
 // 3. MAIN HANDLER
 // ============================================
 
-Deno.serve(async (_req: Request) => {
+Deno.serve(async (req: Request) => {
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
@@ -265,6 +265,11 @@ Deno.serve(async (_req: Request) => {
     )
   }
 
+  // scope=local -> cuma Berita Indo API (gratis, no limit, dipanggil sering)
+  // scope=global -> cuma GNews (limit 100/hari, dipanggil jarang)
+  // tanpa scope -> keduanya (backward compatible)
+  const scope = new URL(req.url).searchParams.get('scope') ?? 'all'
+
   let totalFetched = 0
   let totalInserted = 0
   let totalUpdated = 0
@@ -274,21 +279,25 @@ Deno.serve(async (_req: Request) => {
   // ---- AMBIL SEMUA ARTIKEL ----
   const allArticles: any[] = []
 
-  // 1. Lokal (4 sumber)
-  for (const source of LOCAL_SOURCES) {
-    console.log(`Fetching local: ${source.name}...`)
-    const articles = await fetchLocalSource(source.url, source.name)
-    allArticles.push(...articles)
-    totalFetched += articles.length
+  // 1. Lokal (4 sumber) - gratis & tanpa limit
+  if (scope === 'local' || scope === 'all') {
+    for (const source of LOCAL_SOURCES) {
+      console.log(`Fetching local: ${source.name}...`)
+      const articles = await fetchLocalSource(source.url, source.name)
+      allArticles.push(...articles)
+      totalFetched += articles.length
+    }
   }
 
-  // 2. Global (GNews)
-  const gnewsKey = Deno.env.get('GNEWS_API_KEY')
-  if (gnewsKey) {
-    console.log('Fetching global: GNews...')
-    const articles = await fetchGlobalSource(gnewsKey)
-    allArticles.push(...articles)
-    totalFetched += articles.length
+  // 2. Global (GNews) - limit 100 request/hari
+  if (scope === 'global' || scope === 'all') {
+    const gnewsKey = Deno.env.get('GNEWS_API_KEY')
+    if (gnewsKey) {
+      console.log('Fetching global: GNews...')
+      const articles = await fetchGlobalSource(gnewsKey)
+      allArticles.push(...articles)
+      totalFetched += articles.length
+    }
   }
 
   console.log(`Total articles fetched: ${totalFetched}`)
