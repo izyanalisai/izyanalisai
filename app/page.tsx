@@ -189,11 +189,34 @@ export default function Home() {
 
       const stockList = (stockData as unknown as StockRow[]) ?? []
       const stockById = new Map(stockList.map((s) => [s.id, s]))
+
+      // Untuk resolve ticker di kartu "Sinyal Terbaru", jangan cuma andalkan stockById
+      // (yang di-filter is_active=true) — kalau saham di-delist/suspend sementara
+      // sinyalnya masih ACTIVE, link jadi "/saham/" kosong (link mati). Ambil ticker
+      // langsung dari stock_id manapun statusnya, khusus untuk saham yang belum
+      // ke-cover di stockById.
+      const missingStockIds = ((signalData as unknown as SignalRow[]) ?? [])
+        .map((s) => s.stock_id)
+        .filter((id) => !stockById.has(id))
+      let fallbackStockById = new Map<string, { ticker: string; name: string }>()
+      if (missingStockIds.length > 0) {
+        const { data: fallbackStocks } = await supabase
+          .from('stocks')
+          .select('id, ticker, name')
+          .in('id', missingStockIds)
+        fallbackStockById = new Map(
+          ((fallbackStocks as { id: string; ticker: string; name: string }[]) ?? []).map((s) => [
+            s.id,
+            { ticker: s.ticker, name: s.name },
+          ]),
+        )
+      }
+
       const enrichedSignals = ((signalData as unknown as SignalRow[]) ?? []).map((s) => ({
         ...s,
         stocks: stockById.has(s.stock_id)
           ? { ticker: stockById.get(s.stock_id)!.ticker, name: stockById.get(s.stock_id)!.name }
-          : null,
+          : fallbackStockById.get(s.stock_id) ?? null,
       }))
 
       setIhsg(idx ?? null)
