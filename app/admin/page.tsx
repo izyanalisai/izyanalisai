@@ -51,6 +51,28 @@ type ActiveSignal = {
 const BUG_STATUSES = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'WONT_FIX']
 const FEATURE_STATUSES = ['OPEN', 'PLANNED', 'SHIPPED', 'DECLINED']
 
+type IdxUploadResult = {
+  trade_date?: string
+  total_rows?: number
+  matched?: number
+  unmatched_sample?: string[]
+  quoteError?: string | null
+  candleError?: string | null
+  foreign_flow?: { found_columns: boolean; net_value: number | null; foreignFlowError: string | null }
+  error?: string
+}
+
+type IdxUploadLog = {
+  id: string
+  trade_date: string
+  file_name: string
+  row_count: number
+  matched_count: number
+  status: string
+  error_message: string | null
+  created_at: string
+}
+
 function StatCard({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="rounded-xl bg-white/5 border border-white/10 px-4 py-3">
@@ -67,7 +89,11 @@ export default function AdminPage() {
   const [checking, setChecking] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false)
   const [summary, setSummary] = useState<Summary | null>(null)
-  const [tab, setTab] = useState<'bug' | 'feature' | 'users' | 'signals'>('bug')
+  const [tab, setTab] = useState<'bug' | 'feature' | 'users' | 'signals' | 'idx'>('bug')
+  const [idxDragOver, setIdxDragOver] = useState(false)
+  const [idxUploading, setIdxUploading] = useState(false)
+  const [idxResult, setIdxResult] = useState<IdxUploadResult | null>(null)
+  const [idxUploadLogs, setIdxUploadLogs] = useState<IdxUploadLog[]>([])
   const [bugReports, setBugReports] = useState<BugReport[]>([])
   const [featureRequests, setFeatureRequests] = useState<FeatureRequest[]>([])
   const [users, setUsers] = useState<UserRow[]>([])
@@ -128,6 +154,41 @@ export default function AdminPage() {
     setLoadingList(false)
   }, [supabase])
 
+  const loadIdxUploadLogs = useCallback(async () => {
+    setLoadingList(true)
+    const { data } = await supabase
+      .from('idx_eod_uploads')
+      .select('id, trade_date, file_name, row_count, matched_count, status, error_message, created_at')
+      .order('created_at', { ascending: false })
+      .limit(20)
+    setIdxUploadLogs((data as unknown as IdxUploadLog[]) ?? [])
+    setLoadingList(false)
+  }, [supabase])
+
+  const uploadIdxFile = async (file: File) => {
+    if (!file.name.toLowerCase().endsWith('.xlsx') && !file.name.toLowerCase().endsWith('.xls')) {
+      window.alert('File harus format .xlsx atau .xls (Ringkasan Saham dari IDX).')
+      return
+    }
+    setIdxUploading(true)
+    setIdxResult(null)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const { data, error } = await supabase.functions.invoke('upload-idx-eod', { body: formData })
+      if (error) {
+        setIdxResult({ error: error.message })
+      } else {
+        setIdxResult(data as IdxUploadResult)
+        await loadIdxUploadLogs()
+        await loadSummary()
+      }
+    } catch (e) {
+      setIdxResult({ error: String(e) })
+    }
+    setIdxUploading(false)
+  }
+
   const overrideSignal = async (signalId: string) => {
     const reason = window.prompt('Alasan override sinyal ini (wajib diisi):')
     if (!reason || !reason.trim()) return
@@ -180,7 +241,8 @@ export default function AdminPage() {
     else if (tab === 'feature') loadFeatureRequests()
     else if (tab === 'users') loadUsers()
     else if (tab === 'signals') loadActiveSignals()
-  }, [tab, isAdmin, loadBugReports, loadFeatureRequests, loadUsers, loadActiveSignals])
+    else if (tab === 'idx') loadIdxUploadLogs()
+  }, [tab, isAdmin, loadBugReports, loadFeatureRequests, loadUsers, loadActiveSignals, loadIdxUploadLogs])
 
   const updateBugStatus = async (id: string, status: string) => {
     await supabase.from('bug_reports').update({ status }).eq('id', id)
@@ -245,6 +307,12 @@ export default function AdminPage() {
           className={`px-4 py-2 rounded-xl text-sm ${tab === 'signals' ? 'bg-white/15' : 'bg-white/5 text-slate-400'}`}
         >
           Sinyal Aktif
+        </button>
+        <button
+          onClick={() => setTab('idx')}
+          className={`px-4 py-2 rounded-xl text-sm ${tab === 'idx' ? 'bg-white/15' : 'bg-white/5 text-slate-400'}`}
+        >
+          IDX EOD
         </button>
       </div>
 
@@ -350,6 +418,101 @@ export default function AdminPage() {
           ))}
         </div>
       )}
+
+      {tab === 'idx' && (
+        <div className="space-y-4">
+          <p className="text-slate-400 text-xs leading-relaxed">
+            Upload file <span className="text-slate-300">Ringkasan Saham (.xlsx)</span> dari IDX
+            (idx.co.id → Data Pasar → Ringkasan Perdagangan) setiap hari setelah market tutup.
+            Data akan otomatis diisi ke quotes &amp; candles dengan sumber IDX_MANUAL, menggantikan
+            Yahoo fallback sebagai primary source (spek section 3.1-3.2).
+          </p>
+
+          <label
+            onDragOver={(e) => { e.preventDefault(); setIdxDragOver(true) }}
+            onDragLeave={() => setIdxDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault()
+              setIdxDragOver(false)
+              const file = e.dataTransfer.files?.[0]
+              if (file) uploadIdxFile(file)
+            }}
+            className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-10 text-center cursor-pointer transition-colors ${
+              idxDragOver ? 'border-[#A855F7] bg-[#A855F7]/10' : 'border-white/15 bg-white/5'
+            }`}
+          >
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              disabled={idxUploading}
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) uploadIdxFile(file)
+                e.target.value = ''
+              }}
+            />
+            {idxUploading ? (
+              <p className="text-sm text-slate-300">Mengupload &amp; memproses...</p>
+            ) : (
+              <>
+                <p className="text-sm text-slate-300">Tarik file .xlsx ke sini, atau tap untuk pilih file</p>
+                <p className="text-xs text-slate-500">Ringkasan Saham IDX harian</p>
+              </>
+            )}
+          </label>
+
+          {idxResult && (
+            <div className={`rounded-xl border px-4 py-3 text-xs space-y-1 ${
+              idxResult.error || idxResult.quoteError || idxResult.candleError
+                ? 'border-[#EF4444]/40 bg-[#EF4444]/10 text-[#EF4444]'
+                : 'border-[#22C55E]/40 bg-[#22C55E]/10 text-[#22C55E]'
+            }`}>
+              {idxResult.error ? (
+                <p>Gagal: {idxResult.error}</p>
+              ) : (
+                <>
+                  <p>Trade date: {idxResult.trade_date} · {idxResult.matched}/{idxResult.total_rows} saham cocok</p>
+                  {idxResult.quoteError && <p>Error quotes: {idxResult.quoteError}</p>}
+                  {idxResult.candleError && <p>Error candles: {idxResult.candleError}</p>}
+                  {idxResult.foreign_flow?.found_columns && (
+                    <p>Foreign flow net: {idxResult.foreign_flow.net_value?.toLocaleString('id-ID')}</p>
+                  )}
+                  {idxResult.unmatched_sample && idxResult.unmatched_sample.length > 0 && (
+                    <p>Tidak cocok (contoh): {idxResult.unmatched_sample.slice(0, 10).join(', ')}</p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          <div>
+            <p className="text-slate-400 text-xs mb-2">Riwayat upload terakhir</p>
+            <div className="space-y-2">
+              {idxUploadLogs.length === 0 && !loadingList && (
+                <p className="text-slate-500 text-sm">Belum ada riwayat upload.</p>
+              )}
+              {idxUploadLogs.map((log) => (
+                <div key={log.id} className="rounded-xl bg-white/5 border border-white/10 px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-slate-200">{log.trade_date}</p>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+                      log.status === 'PROCESSED' ? 'bg-[#22C55E]/20 text-[#22C55E]' : 'bg-[#EF4444]/20 text-[#EF4444]'
+                    }`}>
+                      {log.status}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {log.file_name} · {log.matched_count}/{log.row_count} cocok ·{' '}
+                    {new Date(log.created_at).toLocaleString('id-ID')}
+                  </p>
+                  {log.error_message && <p className="text-xs text-[#EF4444] mt-1">{log.error_message}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
-                                          }
+}
