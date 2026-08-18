@@ -101,7 +101,12 @@ const STATIC_TICKERS = [
 ]
 const TICKER_SET = new Set(STATIC_TICKERS)
 
-// Model AI gratis dari OpenRouter
+// Tier 1: 9Router (self-hosted di Railway, OpenAI-compatible) -- provider utama.
+// Tier 2: OpenRouter, 3 model gratis -- fallback kalau 9Router gagal total.
+const NINEROUTER_MODELS = [
+  Deno.env.get('NINEROUTER_MODEL') || 'auto',
+]
+
 const FREE_MODELS = [
   'nvidia/nemotron-3-ultra-550b-a55b:free',
   'google/gemma-4-31b-it:free',
@@ -152,23 +157,23 @@ function findTickers(text: string): string[] {
   return found
 }
 
-// Klasifikasi sentimen pake AI (OpenRouter)
-async function classifyNews(
-  title: string,
-  description: string,
-  apiKey: string
-): Promise<{ ticker: string | null; sentiment: string; reason: string }> {
-  const content = `Title: ${title}\nDescription: ${description || ''}`
-
-  for (const model of FREE_MODELS) {
+// Klasifikasi sentimen pake AI: tier 1 9Router, tier 2 OpenRouter (fallback opsional)
+async function classifyWithProvider(
+  providerLabel: string,
+  baseUrl: string,
+  apiKey: string,
+  models: string[],
+  content: string,
+  extraHeaders: Record<string, string> = {},
+): Promise<{ ticker: string | null; sentiment: string; reason: string } | null> {
+  for (const model of models) {
     try {
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      const res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://izyanalisai.vercel.app',
-          'X-Title': 'IzyAnalisAI News Classifier',
+          ...extraHeaders,
         },
         body: JSON.stringify({
           model,
@@ -199,6 +204,29 @@ async function classifyNews(
     } catch {
       continue
     }
+  }
+  return null
+}
+
+async function classifyNews(
+  title: string,
+  description: string,
+  nineRouterKey: string,
+  nineRouterBaseUrl: string,
+): Promise<{ ticker: string | null; sentiment: string; reason: string }> {
+  const content = `Title: ${title}\nDescription: ${description || ''}`
+
+  const tier1 = await classifyWithProvider('9router', nineRouterBaseUrl, nineRouterKey, NINEROUTER_MODELS, content)
+  if (tier1) return tier1
+
+  const openRouterKey = Deno.env.get('OPENROUTER_API_KEY')
+  if (openRouterKey) {
+    const baseUrl = Deno.env.get('AI_BASE_URL') || 'https://openrouter.ai/api/v1'
+    const tier2 = await classifyWithProvider('openrouter', baseUrl, openRouterKey, FREE_MODELS, content, {
+      'HTTP-Referer': 'https://izyanalisai.vercel.app',
+      'X-Title': 'IzyAnalisAI News Classifier',
+    })
+    if (tier2) return tier2
   }
 
   return { ticker: null, sentiment: 'neutral', reason: 'AI gagal, fallback neutral' }
@@ -257,10 +285,11 @@ Deno.serve(async (req: Request) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   )
 
-  const apiKey = Deno.env.get('OPENROUTER_API_KEY')
-  if (!apiKey) {
+  const nineRouterKey = Deno.env.get('NINEROUTER_API_KEY')
+  const nineRouterBaseUrl = Deno.env.get('NINEROUTER_BASE_URL')
+  if (!nineRouterKey || !nineRouterBaseUrl) {
     return new Response(
-      JSON.stringify({ error: 'OPENROUTER_API_KEY belum di-set di Supabase Secrets' }),
+      JSON.stringify({ error: 'NINEROUTER_API_KEY/NINEROUTER_BASE_URL belum di-set di Supabase Secrets' }),
       { status: 500 }
     )
   }
@@ -332,7 +361,7 @@ Deno.serve(async (req: Request) => {
       let primaryTicker: string | null = null
 
       if (mappedTickers.length > 0) {
-        const result = await classifyNews(title, description || '', apiKey)
+        const result = await classifyNews(title, description || '', nineRouterKey, nineRouterBaseUrl)
         sentiment = result.sentiment
         sentimentReason = result.reason || 'Klasifikasi AI'
         primaryTicker = result.ticker || mappedTickers[0]
