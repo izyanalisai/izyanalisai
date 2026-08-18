@@ -1,8 +1,21 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
 // Worker Chat - Asisten AI
-// Fallback 3 model GRATIS OpenRouter (vision-capable, karena user bisa kirim gambar chart).
-const FREE_MODELS = [
+// AI Gateway auto-failover chain (spec Section 2.5 / 12.1):
+//   Tier 1: 9Router (self-hosted di Railway, OpenAI-compatible) -- provider utama.
+//   Tier 2: OpenRouter, 3 model gratis (vision-capable) -- dipanggil hanya kalau
+//           9Router gagal total (down, error, dsb).
+// Ini mencegah chat-asisten-ai mati total hanya karena satu provider bermasalah,
+// sesuai prinsip "sistem otomatis pindah provider" di Section 2.5.
+
+// Model 9Router mengikuti provider apa pun yang sudah dikonfigurasi di instance
+// 9Router itu sendiri (lihat dashboard 9Router -> Providers). Nama model di sini
+// harus persis sama dengan yang terdaftar di instance tersebut.
+const NINEROUTER_MODELS = [
+  Deno.env.get('NINEROUTER_MODEL') || 'auto',
+]
+
+const OPENROUTER_FREE_MODELS = [
   'google/gemma-4-31b-it:free',
   'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
   'google/gemma-4-26b-a4b-it:free',
@@ -18,46 +31,81 @@ const CORS_HEADERS = {
 
 interface CallResult { text: string; modelUsed: string; usage: { input: number; output: number } }
 
-async function callOpenRouter(messages: unknown[], apiKey: string): Promise<CallResult> {
+// Pemanggil generik OpenAI-compatible chat/completions -- dipakai untuk 9Router
+// maupun OpenRouter karena keduanya OpenAI-compatible. providerLabel murni untuk log.
+async function callProvider(
+  providerLabel: string,
+  baseUrl: string,
+  apiKey: string,
+  models: string[],
+  messages: unknown[],
+  extraHeaders: Record<string, string> = {},
+): Promise<CallResult> {
   let lastError: unknown = null
-  for (const model of FREE_MODELS) {
+  for (const model of models) {
     try {
-      const baseUrl = Deno.env.get('AI_BASE_URL') || 'https://openrouter.ai/api/v1'
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://izyanalisai.vercel.app',
-          'X-Title': 'IzyAnalisAI Chat',
+          ...extraHeaders,
         },
         body: JSON.stringify({ model, messages, max_tokens: 800 }),
       })
       if (res.status === 429 || res.status === 402) {
         lastError = await res.text()
-        console.error(`[chat-asisten-ai] model ${model} gagal (${res.status}): ${lastError}`)
+        console.error(`[chat-asisten-ai] [${providerLabel}] model ${model} gagal (${res.status}): ${lastError}`)
         continue
       }
       if (!res.ok) {
         lastError = await res.text()
-        console.error(`[chat-asisten-ai] model ${model} gagal (${res.status}): ${lastError}`)
+        console.error(`[chat-asisten-ai] [${providerLabel}] model ${model} gagal (${res.status}): ${lastError}`)
         continue
       }
       const data = await res.json()
       const text = data?.choices?.[0]?.message?.content ?? ''
-      if (!text) { lastError = 'response kosong'; console.error(`[chat-asisten-ai] model ${model} kasih response kosong`); continue }
+      if (!text) { lastError = 'response kosong'; console.error(`[chat-asisten-ai] [${providerLabel}] model ${model} kasih response kosong`); continue }
       return {
         text,
-        modelUsed: model,
+        modelUsed: `${providerLabel}:${model}`,
         usage: { input: data?.usage?.prompt_tokens ?? 0, output: data?.usage?.completion_tokens ?? 0 },
       }
     } catch (err) {
       lastError = err
-      console.error(`[chat-asisten-ai] model ${model} exception:`, err)
+      console.error(`[chat-asisten-ai] [${providerLabel}] model ${model} exception:`, err)
       continue
     }
   }
-  throw new Error(`Semua model gratis gagal: ${JSON.stringify(lastError)}`)
+  throw new Error(`[${providerLabel}] semua model gagal: ${JSON.stringify(lastError)}`)
+}
+
+// Coba 9Router (tier 1, provider utama) dulu. Kalau gagal total, baru fallback
+// ke OpenRouter (tier 2) -- opsional, kalau OPENROUTER_API_KEY belum di-set di
+// Supabase Edge Function Secrets, chain berhenti di 9Router saja.
+async function callAIChain(messages: unknown[], nineRouterKey: string, nineRouterBaseUrl: string): Promise<CallResult> {
+  try {
+    return await callProvider('9router', nineRouterBaseUrl, nineRouterKey, NINEROUTER_MODELS, messages)
+  } catch (nineRouterErr) {
+    console.error('[chat-asisten-ai] tier 1 (9router) gagal total, coba tier 2 (openrouter):', nineRouterErr)
+
+    const openRouterKey = Deno.env.get('OPENROUTER_API_KEY')
+    if (!openRouterKey) {
+      console.error('[chat-asisten-ai] OPENROUTER_API_KEY belum di-set, chain berhenti di tier 1')
+      throw nineRouterErr
+    }
+
+    try {
+      const baseUrl = Deno.env.get('AI_BASE_URL') || 'https://openrouter.ai/api/v1'
+      return await callProvider('openrouter', baseUrl, openRouterKey, OPENROUTER_FREE_MODELS, messages, {
+        'HTTP-Referer': 'https://izyanalisai.vercel.app',
+        'X-Title': 'IzyAnalisAI Chat',
+      })
+    } catch (openRouterErr) {
+      console.error('[chat-asisten-ai] tier 2 (openrouter) juga gagal:', openRouterErr)
+      throw new Error(`Semua provider AI gagal. 9router: ${String(nineRouterErr)} | openrouter: ${String(openRouterErr)}`)
+    }
+  }
 }
 
 Deno.serve(async (req: Request) => {
@@ -65,10 +113,11 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { status: 204, headers: CORS_HEADERS })
   }
   try {
-    const apiKey = Deno.env.get('OPENROUTER_API_KEY')
-    if (!apiKey) {
-      console.error('[chat-asisten-ai] OPENROUTER_API_KEY belum di-set di Supabase Edge Function Secrets')
-      return new Response(JSON.stringify({ error: 'OPENROUTER_API_KEY belum di-set di Supabase Secrets' }), { status: 500, headers: CORS_HEADERS })
+    const nineRouterKey = Deno.env.get('NINEROUTER_API_KEY')
+    const nineRouterBaseUrl = Deno.env.get('NINEROUTER_BASE_URL')
+    if (!nineRouterKey || !nineRouterBaseUrl) {
+      console.error('[chat-asisten-ai] NINEROUTER_API_KEY/NINEROUTER_BASE_URL belum di-set di Supabase Edge Function Secrets')
+      return new Response(JSON.stringify({ error: 'NINEROUTER_API_KEY/NINEROUTER_BASE_URL belum di-set di Supabase Secrets' }), { status: 500, headers: CORS_HEADERS })
     }
 
     const authHeader = req.headers.get('Authorization')
@@ -162,9 +211,9 @@ Deno.serve(async (req: Request) => {
 
     let callResult: CallResult
     try {
-      callResult = await callOpenRouter(chatMessages, apiKey)
+      callResult = await callAIChain(chatMessages, nineRouterKey, nineRouterBaseUrl)
     } catch (err) {
-      console.error('[chat-asisten-ai] semua model AI gagal, refund token:', err)
+      console.error('[chat-asisten-ai] semua provider AI gagal (9router + openrouter), refund token:', err)
       const { data: refundData, error: refundErr } = await supabase.rpc('refund_token', {
         p_type: '-AI_CHAT',
         p_reference_id: turnId,
