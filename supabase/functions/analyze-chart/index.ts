@@ -6,6 +6,11 @@ import { Image } from 'https://deno.land/x/imagescript@1.2.15/mod.ts';
 // arah BUY-only karena SELL memang sedang dimatikan di engine utama juga).
 // Insert ke chart_analyses cuma boleh lewat service role di sini -- client
 // cuma punya SELECT (lihat migration restrict_chart_analyses_to_server_write).
+// Tier 1: 9Router (self-hosted di Railway, OpenAI-compatible) -- provider utama.
+// Tier 2: OpenRouter, 3 model vision gratis -- fallback kalau 9Router gagal total.
+const NINEROUTER_VISION_MODELS = [
+  Deno.env.get('NINEROUTER_VISION_MODEL') || Deno.env.get('NINEROUTER_MODEL') || 'auto'
+];
 const FREE_VISION_MODELS = [
   'google/gemma-4-31b-it:free',
   'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
@@ -33,17 +38,16 @@ function wibDateString(d) {
   return new Date(d.getTime() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 const SYSTEM_PROMPT = 'Kamu adalah asisten analisa chart saham IDX untuk IzyAnalisAI. Tugasmu HANYA membaca chart secara visual: ' + 'arah tren (uptrend/downtrend/sideways), pola candlestick atau pola chart yang terlihat (mis. bullish engulfing, ' + 'double bottom, head and shoulders), dan kondisi umum momentum. ' + 'JANGAN PERNAH menyebut angka Entry, Buy Area, Stop Loss, Take Profit, Risk/Reward, Support, Resistance, atau ' + 'rekomendasi BUY/SELL/HOLD -- semua angka itu dihitung sistem lain, bukan tugasmu. ' + 'Balas HANYA dalam format JSON valid, tanpa markdown, dengan schema persis: ' + '{"narasi": "penjelasan 2-4 kalimat dalam Bahasa Indonesia", "pola": "nama pola singkat atau Tidak ada pola jelas"}';
-async function callVision(imageBase64, mime, apiKey) {
+async function callVisionProvider(providerLabel, baseUrl, apiKey, models, imageBase64, mime, extraHeaders = {}) {
   let lastError = null;
-  for (const model of FREE_VISION_MODELS){
+  for (const model of models){
     try {
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      const res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://izyanalisai.vercel.app',
-          'X-Title': 'IzyAnalisAI Chart Analysis'
+          ...extraHeaders
         },
         body: JSON.stringify({
           model,
@@ -98,21 +102,40 @@ async function callVision(imageBase64, mime, apiKey) {
       return {
         narasi: parsed.narasi || 'AI tidak memberikan narasi.',
         pola: parsed.pola || 'Tidak ada pola jelas',
-        modelUsed: model
+        modelUsed: `${providerLabel}:${model}`
       };
     } catch (err) {
       lastError = err;
       continue;
     }
   }
-  throw new Error(`Semua model vision gratis gagal: ${JSON.stringify(lastError)}`);
+  throw new Error(`[${providerLabel}] semua model vision gagal: ${JSON.stringify(lastError)}`);
+}
+
+async function callVision(imageBase64, mime, nineRouterKey, nineRouterBaseUrl) {
+  try {
+    return await callVisionProvider('9router', nineRouterBaseUrl, nineRouterKey, NINEROUTER_VISION_MODELS, imageBase64, mime);
+  } catch (nineRouterErr) {
+    const openRouterKey = Deno.env.get('OPENROUTER_API_KEY');
+    if (!openRouterKey) throw nineRouterErr;
+    try {
+      const baseUrl = Deno.env.get('AI_BASE_URL') || 'https://openrouter.ai/api/v1';
+      return await callVisionProvider('openrouter', baseUrl, openRouterKey, FREE_VISION_MODELS, imageBase64, mime, {
+        'HTTP-Referer': 'https://izyanalisai.vercel.app',
+        'X-Title': 'IzyAnalisAI Chart Analysis'
+      });
+    } catch (openRouterErr) {
+      throw new Error(`Semua provider AI vision gagal. 9router: ${String(nineRouterErr)} | openrouter: ${String(openRouterErr)}`);
+    }
+  }
 }
 Deno.serve(async (req)=>{
   try {
-    const apiKey = Deno.env.get('OPENROUTER_API_KEY');
-    if (!apiKey) {
+    const nineRouterKey = Deno.env.get('NINEROUTER_API_KEY');
+    const nineRouterBaseUrl = Deno.env.get('NINEROUTER_BASE_URL');
+    if (!nineRouterKey || !nineRouterBaseUrl) {
       return new Response(JSON.stringify({
-        error: 'OPENROUTER_API_KEY belum di-set di Supabase Secrets'
+        error: 'NINEROUTER_API_KEY/NINEROUTER_BASE_URL belum di-set di Supabase Secrets'
       }), {
         status: 500
       });
@@ -254,7 +277,7 @@ Deno.serve(async (req)=>{
       }
     }
     const b64 = btoa(String.fromCharCode(...outBytes));
-    const vision = await callVision(b64, outMime, apiKey);
+    const vision = await callVision(b64, outMime, nineRouterKey, nineRouterBaseUrl);
     const { data: inserted, error: insertErr } = await admin.from('chart_analyses').insert({
       user_id: user.id,
       stock_id: stockId,
