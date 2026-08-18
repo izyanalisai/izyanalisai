@@ -55,7 +55,7 @@ function SectionBody({ section }: { section: SectionKey }) {
           </p>
           <p>
             Data tidak dijual ke pihak ketiga. Data dibagikan hanya ke penyedia layanan yang
-            memang dibutuhkan untuk operasional: penyedia AI (OpenRouter), payment gateway
+            memang dibutuhkan untuk operasional: penyedia AI, payment gateway
             (Midtrans), dan layanan iklan (Google AdMob).
           </p>
           <p>Data disimpan selama akun aktif, dan dihapus mengikuti kebijakan Hapus Akun.</p>
