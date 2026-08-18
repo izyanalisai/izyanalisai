@@ -3,7 +3,12 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 // Worker Sinyal AI - generate penjelasan/reasoning teks untuk kartu sinyal.
 // PENTING: worker ini HANYA menjelaskan evidence yang sudah dihitung engine deterministik
 // (generate-signals). Tidak pernah menentukan ulang angka Buy Area/SL/TP/RR/Confidence.
-// Fallback 3 model GRATIS OpenRouter.
+// Tier 1: 9Router (self-hosted di Railway, OpenAI-compatible) -- provider utama.
+// Tier 2: OpenRouter, 3 model gratis -- fallback kalau 9Router gagal total.
+const NINEROUTER_MODELS = [
+  Deno.env.get('NINEROUTER_MODEL') || 'auto',
+]
+
 const FREE_MODELS = [
   'nvidia/nemotron-3-ultra-550b-a55b:free',
   'google/gemma-4-31b-it:free',
@@ -27,18 +32,16 @@ function sanitizeReply(raw: string): string {
   return text
 }
 
-async function callOpenRouter(prompt: string, apiKey: string) {
+async function callProvider(providerLabel: string, baseUrl: string, apiKey: string, models: string[], prompt: string, extraHeaders: Record<string, string> = {}) {
   let lastError: unknown = null
-  for (const model of FREE_MODELS) {
+  for (const model of models) {
     try {
-      const baseUrl = Deno.env.get('AI_BASE_URL') || 'https://openrouter.ai/api/v1'
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://izyanalisai.vercel.app',
-          'X-Title': 'IzyAnalisAI Signal Reasoning',
+          ...extraHeaders,
         },
         body: JSON.stringify({
           model,
@@ -62,7 +65,7 @@ async function callOpenRouter(prompt: string, apiKey: string) {
       }
       return {
         text,
-        modelUsed: model,
+        modelUsed: `${providerLabel}:${model}`,
         usage: {
           input: data?.usage?.prompt_tokens ?? 0,
           output: data?.usage?.completion_tokens ?? 0,
@@ -73,7 +76,27 @@ async function callOpenRouter(prompt: string, apiKey: string) {
       continue
     }
   }
-  throw new Error(`Semua model gratis gagal: ${JSON.stringify(lastError)}`)
+  throw new Error(`[${providerLabel}] semua model gagal: ${JSON.stringify(lastError)}`)
+}
+
+// Coba 9Router (tier 1) dulu, fallback ke OpenRouter (tier 2) kalau gagal total
+// atau OPENROUTER_API_KEY belum di-set (fallback jadi opsional).
+async function callAIChain(prompt: string, nineRouterKey: string, nineRouterBaseUrl: string) {
+  try {
+    return await callProvider('9router', nineRouterBaseUrl, nineRouterKey, NINEROUTER_MODELS, prompt)
+  } catch (nineRouterErr) {
+    const openRouterKey = Deno.env.get('OPENROUTER_API_KEY')
+    if (!openRouterKey) throw nineRouterErr
+    try {
+      const baseUrl = Deno.env.get('AI_BASE_URL') || 'https://openrouter.ai/api/v1'
+      return await callProvider('openrouter', baseUrl, openRouterKey, FREE_MODELS, prompt, {
+        'HTTP-Referer': 'https://izyanalisai.vercel.app',
+        'X-Title': 'IzyAnalisAI Signal Reasoning',
+      })
+    } catch (openRouterErr) {
+      throw new Error(`Semua provider AI gagal. 9router: ${String(nineRouterErr)} | openrouter: ${String(openRouterErr)}`)
+    }
+  }
 }
 
 Deno.serve(async (req: Request) => {
@@ -93,10 +116,11 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
   }
 
-  const apiKey = Deno.env.get('OPENROUTER_API_KEY')
-  if (!apiKey) {
+  const nineRouterKey = Deno.env.get('NINEROUTER_API_KEY')
+  const nineRouterBaseUrl = Deno.env.get('NINEROUTER_BASE_URL')
+  if (!nineRouterKey || !nineRouterBaseUrl) {
     return new Response(
-      JSON.stringify({ error: 'OPENROUTER_API_KEY belum di-set di Supabase Secrets' }),
+      JSON.stringify({ error: 'NINEROUTER_API_KEY/NINEROUTER_BASE_URL belum di-set di Supabase Secrets' }),
       { status: 500 }
     )
   }
@@ -150,7 +174,7 @@ TP1: ${s.tp1}, TP2: ${s.tp2}
 Stop Loss: ${s.stop_loss}
 Evidence struktur: ${JSON.stringify(s.evidence)}${catalystText}`
 
-      const { text, modelUsed, usage } = await callOpenRouter(prompt, apiKey)
+      const { text, modelUsed, usage } = await callAIChain(prompt, nineRouterKey, nineRouterBaseUrl)
 
       await supabase
         .from('signals')
