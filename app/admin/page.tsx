@@ -40,6 +40,21 @@ type UserRow = {
   subscriptions: { status: string; plan: string; period_end: string | null }[] | null
 }
 
+type JobRunRow = {
+  id: string
+  job_name: string
+  status: string
+  started_at: string
+  finished_at: string | null
+  detail: { error_message?: string; error?: string } | null
+}
+
+type TopTokenUser = {
+  user_id: string
+  full_name: string | null
+  used_today: number
+}
+
 type ActiveSignal = {
   id: string
   direction: string
@@ -89,7 +104,7 @@ export default function AdminPage() {
   const [checking, setChecking] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false)
   const [summary, setSummary] = useState<Summary | null>(null)
-  const [tab, setTab] = useState<'bug' | 'feature' | 'users' | 'signals' | 'idx'>('bug')
+  const [tab, setTab] = useState<'bug' | 'feature' | 'users' | 'signals' | 'idx' | 'cron' | 'tokens'>('bug')
   const [idxDragOver, setIdxDragOver] = useState(false)
   const [idxUploading, setIdxUploading] = useState(false)
   const [idxResult, setIdxResult] = useState<IdxUploadResult | null>(null)
@@ -98,6 +113,8 @@ export default function AdminPage() {
   const [featureRequests, setFeatureRequests] = useState<FeatureRequest[]>([])
   const [users, setUsers] = useState<UserRow[]>([])
   const [activeSignals, setActiveSignals] = useState<ActiveSignal[]>([])
+  const [jobRuns, setJobRuns] = useState<JobRunRow[]>([])
+  const [topTokenUsers, setTopTokenUsers] = useState<TopTokenUser[]>([])
   const [overridingId, setOverridingId] = useState<string | null>(null)
   const [loadingList, setLoadingList] = useState(false)
 
@@ -154,7 +171,49 @@ export default function AdminPage() {
     setLoadingList(false)
   }, [supabase])
 
-  const loadIdxUploadLogs = useCallback(async () => {
+  const loadJobRuns = useCallback(async () => {
+    setLoadingList(true)
+    const { data } = await supabase
+      .from('job_runs')
+      .select('id, job_name, status, started_at, finished_at, detail')
+      .order('started_at', { ascending: false })
+      .limit(30)
+    setJobRuns((data as unknown as JobRunRow[]) ?? [])
+    setLoadingList(false)
+  }, [supabase])
+
+  // Top 5 user pemakai token terbanyak HARI INI (WIB) - deteksi abuse, spec section 16.2 poin 4.
+  const loadTopTokenUsers = useCallback(async () => {
+    setLoadingList(true)
+    const todayWib = new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    const { data: txRows } = await supabase
+      .from('token_transactions')
+      .select('amount, wallet_id, token_wallets(user_id, profiles(full_name))')
+      .lt('amount', 0)
+      .gte('created_at', `${todayWib}T00:00:00+07:00`)
+      .lt('created_at', `${todayWib}T23:59:59.999+07:00`)
+      .limit(1000)
+
+    const usageMap = new Map<string, { full_name: string | null; used: number }>()
+    for (const row of (txRows as unknown as {
+      amount: number
+      token_wallets: { user_id: string; profiles: { full_name: string | null } | null } | null
+    }[]) ?? []) {
+      const uid = row.token_wallets?.user_id
+      if (!uid) continue
+      const existing = usageMap.get(uid) ?? { full_name: row.token_wallets?.profiles?.full_name ?? null, used: 0 }
+      existing.used += Math.abs(row.amount)
+      usageMap.set(uid, existing)
+    }
+    const top = Array.from(usageMap.entries())
+      .map(([user_id, v]) => ({ user_id, full_name: v.full_name, used_today: v.used }))
+      .sort((a, b) => b.used_today - a.used_today)
+      .slice(0, 5)
+    setTopTokenUsers(top)
+    setLoadingList(false)
+  }, [supabase])
+
+
     setLoadingList(true)
     const { data } = await supabase
       .from('idx_eod_uploads')
@@ -242,7 +301,9 @@ export default function AdminPage() {
     else if (tab === 'users') loadUsers()
     else if (tab === 'signals') loadActiveSignals()
     else if (tab === 'idx') loadIdxUploadLogs()
-  }, [tab, isAdmin, loadBugReports, loadFeatureRequests, loadUsers, loadActiveSignals, loadIdxUploadLogs])
+    else if (tab === 'cron') loadJobRuns()
+    else if (tab === 'tokens') loadTopTokenUsers()
+  }, [tab, isAdmin, loadBugReports, loadFeatureRequests, loadUsers, loadActiveSignals, loadIdxUploadLogs, loadJobRuns, loadTopTokenUsers])
 
   const updateBugStatus = async (id: string, status: string) => {
     await supabase.from('bug_reports').update({ status }).eq('id', id)
@@ -313,6 +374,18 @@ export default function AdminPage() {
           className={`px-4 py-2 rounded-xl text-sm ${tab === 'idx' ? 'bg-white/15' : 'bg-white/5 text-slate-400'}`}
         >
           IDX EOD
+        </button>
+        <button
+          onClick={() => setTab('cron')}
+          className={`px-4 py-2 rounded-xl text-sm ${tab === 'cron' ? 'bg-white/15' : 'bg-white/5 text-slate-400'}`}
+        >
+          Log Cron
+        </button>
+        <button
+          onClick={() => setTab('tokens')}
+          className={`px-4 py-2 rounded-xl text-sm ${tab === 'tokens' ? 'bg-white/15' : 'bg-white/5 text-slate-400'}`}
+        >
+          Top Token User
         </button>
       </div>
 
@@ -511,6 +584,58 @@ export default function AdminPage() {
               ))}
             </div>
           </div>
+        </div>
+      )}
+      {tab === 'cron' && (
+        <div className="space-y-2">
+          <p className="text-slate-400 text-xs leading-relaxed mb-2">
+            30 run cron job terakhir (fetch-news, generate-signals, daily-token-grant, dll) — spec section 16.2 poin 2.
+          </p>
+          {!loadingList && jobRuns.length === 0 && <p className="text-slate-500 text-sm">Belum ada log cron.</p>}
+          {jobRuns.map((j) => {
+            const errMsg = j.detail?.error_message || j.detail?.error
+            const durationSec =
+              j.finished_at ? Math.round((new Date(j.finished_at).getTime() - new Date(j.started_at).getTime()) / 1000) : null
+            return (
+              <div key={j.id} className="rounded-xl bg-white/5 border border-white/10 px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-slate-200">{j.job_name}</p>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+                    j.status === 'SUCCESS' ? 'bg-[#22C55E]/20 text-[#22C55E]'
+                      : j.status === 'RUNNING' ? 'bg-amber-500/20 text-amber-400'
+                      : 'bg-[#EF4444]/20 text-[#EF4444]'
+                  }`}>
+                    {j.status}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  {new Date(j.started_at).toLocaleString('id-ID')}
+                  {durationSec !== null && ` · ${durationSec}s`}
+                </p>
+                {errMsg && <p className="text-xs text-[#EF4444] mt-1">{errMsg}</p>}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {tab === 'tokens' && (
+        <div className="space-y-2">
+          <p className="text-slate-400 text-xs leading-relaxed mb-2">
+            Top 5 user dengan pemakaian token terbanyak hari ini (WIB) — deteksi abuse, spec section 16.2 poin 4.
+          </p>
+          {!loadingList && topTokenUsers.length === 0 && (
+            <p className="text-slate-500 text-sm">Belum ada pemakaian token hari ini.</p>
+          )}
+          {topTokenUsers.map((u, i) => (
+            <div key={u.user_id} className="rounded-xl bg-white/5 border border-white/10 px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">#{i + 1}</span>
+                <p className="text-sm text-slate-200">{u.full_name || '(tanpa nama)'}</p>
+              </div>
+              <span className="text-sm font-semibold text-[#F59E0B]">{u.used_today} token</span>
+            </div>
+          ))}
         </div>
       )}
     </main>
