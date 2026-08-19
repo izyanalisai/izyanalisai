@@ -1,19 +1,53 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-// Signal Engine -- Structural Confluence + Zone Contract (spec v4.2, section 3.3 & 5.2).
-// structural_v2_d1 (naik dari structural_v2):
-//  - FIX KRITIS 18 Agustus 2026: v2 lama pakai H1 (entry) + H4 (confirm) untuk tier daily.
-//    Spec v4.2 section 3.3 secara eksplisit MENGHAPUS H1/H4 dari engine karena data
-//    Yahoo Finance tidak reliable di timeframe itu dan IDX EOD tidak menyediakannya
-//    gratis. Sekarang: Daily = D1 saja (evaluasi struktur D1 tunggal, section 5.2).
-//    Swing = D1 (entry & SL) + W1 (bias & target), tidak berubah dari sebelumnya.
-//  - HARD GATE dipasang ulang (sempat hilang di v2): sinyal HANYA di-insert kalau
-//    FORMULA_VERSION ini punya row approved di signal_engine_versions.is_approved=true.
-//    Sampai backtest resmi terhadap model zone D1 lolos gate, function ini akan selalu
-//    return early tanpa insert apapun -- dicatat di job_runs sebagai 'blocked_no_gate'.
-//  - Sisanya (zone contract, overextension protection, entry_type/trigger_state,
-//    evidence terstruktur) tetap sama seperti v2.
+// Signal Engine -- Structural Confluence + Zone Contract (spec v4.2, section 5-7 & 52-59).
+// structural_v2. Ini adalah engine yang DIPANGGIL LANGSUNG oleh cron produksi lewat
+// trigger_signal_pipeline_mtf() (job 65/66/67) -- perbaikan di sini WAJIB ada di sini,
+// bukan cuma di function generate-signals biasa (yang tidak dipakai cron aktif).
+//
+// v4.2 update (dari structural_v2 versi v4.1): H1/H4 dihapus total dari engine (section
+// 5.2/3.3) karena data intraday tidak reliable & tidak tersedia gratis dari IDX EOD.
+//  - Daily sekarang cuma evaluasi D1 (entry=D1, confirm=null, bias=D1) -- bukan lagi
+//    confluence H1->H4->D1. SL/TP/struktur semua dari D1 EOD.
+//  - Swing tetap D1 (entry & SL) -> W1 (bias & target), tidak berubah.
+//
+// Sisanya (naik dari versi mtf lama, buy-only, banyak fallback R:R fabrikasi):
+//  - Sekarang BUY *dan* SELL (bearish alert), bukan cuma BUY.
+//  - Support/Resistance sekarang ZONE (price_low/price_high/strength/touch_count/
+//    retest_count), bukan angka tunggal (section 54). Zone dipersist ke tabel
+//    structure_zones sebagai immutable snapshot per run (section 61).
+//  - TP1/TP2 WAJIB berasal dari zone struktural valid. Tidak ada lagi fallback R:R
+//    yang mengarang target (section 56.4). Kalau tidak ada zone TP1 valid -> NO SIGNAL.
+//    Kalau TP1 valid tapi tidak ada zone kedua -> tp2 = NULL + tp2_reason.
+//  - Overextension/chasing protection (section 58): BUY diblokir kalau harga sudah
+//    terlalu jauh dari support zone (formula versioned per tier).
+//  - entry_type (AREA/TRIGGER/RETEST/SUPPORT) dan trigger_state (breakout/breakdown
+//    state machine, section 55) dihitung dari histori candle, bukan cuma candle terakhir.
+//  - Setiap stock yang diproses (BUY/SELL/NO_SIGNAL/FAILED) dicatat ke
+//    signal_pipeline_events dengan reason eksplisit (section 52.1/23.3 observability).
+//
+// FIX (audit 17 Agustus 2026): recordEvent() SEBELUMNYA menulis stage='signal_decision'
+// dan status='BUY'/'SELL'/'NO_SIGNAL' langsung ke signal_pipeline_events. Nilai itu
+// melanggar CHECK constraint tabel (stage harus salah satu dari ingestion/quality/
+// indicator/structure/confluence/signal/snapshot/notification; status harus OK/FAILED/
+// SKIPPED) -- akibatnya SETIAP insert gagal secara diam-diam (error tidak pernah dicek)
+// dan tabel observability ini selalu kosong walau fungsi jalan tiap hari. Sekarang
+// outcome asli (BUY/SELL/NO_SIGNAL/FAILED) dipetakan ke status enum yang valid dan
+// disimpan juga di detail.outcome supaya informasinya tidak hilang. Section 23.3 juga
+// menuntut failure tidak boleh menyamar sebagai NO SIGNAL -- sekarang kegagalan teknis
+// (batch fetch gagal, insert zone gagal, insert signal gagal) direkam eksplisit sebagai
+// status FAILED, bukan cuma masuk counter debugSamples yang tidak persisten.
+//
+// FIX (audit 17 Agustus 2026, bag. 4): resolveDataSource() cuma mengenali source
+// 'IDX_MANUAL' sebagai IDX asli. Padahal worker fetch-idx-eod (auto, dibuat 17 Agustus
+// 2026) menulis candle dengan source 'IDX_AUTO' -- akibatnya walau fetch-idx-eod SUKSES
+// dan candle hari ini benar-benar dari IDX, signal tetap ditandai data_source =
+// YAHOO_FALLBACK selamanya (salah, melanggar section 3.2/18.2 soal audit data_source).
+// Sekarang IDX_MANUAL dan IDX_AUTO dua-duanya dianggap sumber IDX yang valid.
+//
+// Daily : D1 (entry, Stop Loss, bias & Target -- satu timeframe, tanpa confirm)
+// Swing : D1 (entry & Stop Loss) -> W1 (bias & Target)
 const CONCURRENCY = 20;
-const FORMULA_VERSION = 'structural_v2_d1';
+const FORMULA_VERSION = 'structural_v2';
 const PIVOT_LEFT = 2;
 const PIVOT_RIGHT = 2;
 const CANDLE_LIMIT = 100;
@@ -28,6 +62,7 @@ const OVEREXTENSION_MAX_PCT = {
   daily: 0.07,
   swing: 0.12
 };
+// Spec v4.2 section 5.2: Daily = D1 saja (H1/H4 dihapus). Swing = D1 (entry/SL) + W1 (bias/target).
 const TIERS = {
   daily: {
     tier: 'daily',
@@ -64,6 +99,8 @@ function findPivots(candles) {
     lows
   };
 }
+// Section 54.2: Zone Merge -- pivot dalam radius ZONE_MERGE_TOLERANCE_PCT digabung jadi satu
+// zone. Deterministik dari urutan harga, bukan keputusan manual per kasus.
 function buildZones(pivots, zoneType, timeframe, totalBars) {
   if (pivots.length === 0) return [];
   const sorted = [
@@ -159,6 +196,10 @@ function secondZoneBelow(zones, first) {
   if (candidates.length === 0) return null;
   return candidates.reduce((best, z)=>z.price_high > best.price_high ? z : best);
 }
+// Section 55: Breakout/Breakdown/Rejection/Retest -- state dihitung dari histori candle
+// dalam lookback window, bukan cuma candle terakhir. Kalau urutan intrabar dalam satu
+// candle tidak diketahui, kita tidak mengarang urutan kejadian (section 55.4) -- kita
+// hanya pakai posisi close relatif terhadap zone.
 function classifyTrigger(candles, zone, kind) {
   const window = candles.slice(-BREAKOUT_LOOKBACK_BARS);
   if (window.length === 0) return null;
@@ -193,6 +234,8 @@ function classifyTrigger(candles, zone, kind) {
     return 'BREAKDOWN_CONFIRMED';
   }
 }
+// Section 58: Overextension/Chasing Protection -- hanya menggerbang BUY. UNKNOWN
+// (data/zone tidak cukup) tidak boleh diloloskan jadi BUY.
 function classifyOverextension(entryPrice, supportZone, tier) {
   if (!supportZone) return {
     status: 'UNKNOWN',
@@ -225,9 +268,20 @@ function getExpiry(tier, now) {
   }
   return new Date(expiryWib.getTime() - wibOffsetMs).toISOString();
 }
+// Spec v4.2 section 3.2: signals.data_source WAJIB mencerminkan sumber data asli yang
+// dipakai engine, bukan sekadar default kolom. IDX EOD (baik upload manual admin,
+// source 'IDX_MANUAL', maupun auto-fetch worker fetch-idx-eod, source 'IDX_AUTO', di
+// tabel candles) adalah primary; kalau candle entry timeframe hari ini masih dari Yahoo
+// (source default 'YAHOO'), signal ditandai YAHOO_FALLBACK supaya bisa diaudit sesuai
+// section 18.2. FIX (audit 17 Agustus 2026, bag. 4): sebelumnya hanya 'IDX_MANUAL' yang
+// dikenali, jadi hasil fetch-idx-eod (auto) selalu salah ditandai YAHOO_FALLBACK.
+function resolveDataSource(entryCandles) {
+  const last = entryCandles[entryCandles.length - 1];
+  return last?.source === 'IDX_MANUAL' || last?.source === 'IDX_AUTO' ? 'IDX' : 'YAHOO_FALLBACK';
+}
 async function fetchTf(supabase, stockId, tf, now) {
   const [{ data: candlesDesc, error: cErr }, { data: indRow, error: iErr }] = await Promise.all([
-    supabase.from('candles').select('id, ts, open, high, low, close, volume').eq('stock_id', stockId).eq('timeframe', tf).order('ts', {
+    supabase.from('candles').select('id, ts, open, high, low, close, volume, source').eq('stock_id', stockId).eq('timeframe', tf).order('ts', {
       ascending: false
     }).limit(CANDLE_LIMIT),
     supabase.from('indicators').select('ema5, ema9, ema21, ema50, rsi14, macd_line, macd_signal, stoch_k, stoch_d, volume_avg20').eq('stock_id', stockId).eq('timeframe', tf).maybeSingle()
@@ -258,32 +312,9 @@ Deno.serve(async (req)=>{
   }
   const cfg = TIERS[tierParam];
   const now = new Date();
-  // HARD GATE (dipasang ulang 18 Agustus 2026): sinyal FORMULA_VERSION ini hanya boleh
-  // di-generate kalau sudah lolos backtest resmi & ditandai approved di
-  // signal_engine_versions. Sampai itu terjadi, function selesai tanpa insert apapun --
-  // dicatat sebagai job_runs status 'blocked_no_gate' (bukan 'success' palsu, section 16.3).
-  const { data: approvedVersion } = await supabase.from('signal_engine_versions').select('id').eq('formula_version', FORMULA_VERSION).eq('timeframe', cfg.biasTf).eq('is_approved', true).maybeSingle();
-  if (!approvedVersion) {
-    await supabase.from('job_runs').insert({
-      job_name: `generate-signals:${cfg.tier}`,
-      status: 'blocked_no_gate',
-      started_at: now.toISOString(),
-      finished_at: now.toISOString(),
-      detail: {
-        reason: `formula_version ${FORMULA_VERSION} belum approved di signal_engine_versions untuk timeframe ${cfg.biasTf} -- tidak ada sinyal yang di-generate`
-      }
-    });
-    return new Response(JSON.stringify({
-      status: 'blocked_no_gate',
-      formula_version: FORMULA_VERSION,
-      reason: 'Formula belum lolos backtest gate resmi. Tidak ada sinyal yang di-generate.'
-    }), {
-      status: 200
-    });
-  }
   const { data: jobRun, error: jobErr } = await supabase.from('job_runs').insert({
-    job_name: `generate-signals:${cfg.tier}`,
-    status: 'running',
+    job_name: `generate-signals-mtf:${cfg.tier}`,
+    status: 'RUNNING',
     started_at: now.toISOString()
   }).select('id').single();
   if (jobErr || !jobRun) {
@@ -297,7 +328,7 @@ Deno.serve(async (req)=>{
   const { data: stocks, error } = await supabase.from('stocks').select('id, ticker').eq('is_active', true).order('ticker').range(offset, offset + limit - 1);
   if (error || !stocks) {
     await supabase.from('job_runs').update({
-      status: 'failed',
+      status: 'ERROR',
       finished_at: new Date().toISOString(),
       detail: {
         error: error?.message
@@ -313,13 +344,21 @@ Deno.serve(async (req)=>{
   let totalSetupInvalid = 0, totalOverextended = 0;
   const debugSamples = {};
   const pipelineEvents = [];
-  const recordEvent = (stockId, status, detail)=>{
+  // FIX (audit 17 Agustus 2026): map outcome -> status enum yang benar-benar diterima
+  // signal_pipeline_events_status_check (OK/FAILED/SKIPPED), stage dikunci ke 'signal'
+  // (satu-satunya nilai yang cocok di enum stage untuk titik keputusan akhir per saham).
+  // Outcome asli (BUY/SELL/NO_SIGNAL/FAILED) tetap disimpan utuh di detail.outcome.
+  const recordEvent = (stockId, outcome, detail)=>{
+    const status = outcome === 'FAILED' ? 'FAILED' : outcome === 'NO_SIGNAL' ? 'SKIPPED' : 'OK';
     pipelineEvents.push({
       stock_id: stockId,
       tier: cfg.tier,
-      stage: 'signal_decision',
+      stage: 'signal',
       status,
-      detail,
+      detail: {
+        ...detail,
+        outcome
+      },
       job_run_id: jobRunId
     });
   };
@@ -336,10 +375,22 @@ Deno.serve(async (req)=>{
         bias
       };
     }));
-    for (const r of results){
+    // FIX (audit 17 Agustus 2026): sebelumnya loop ini pakai `for (const r of results)`
+    // tanpa index, jadi kalau sebuah batch item gagal (rejected), stock_id-nya tidak bisa
+    // dipetakan balik ke batch[idx] dan gagalnya tidak pernah tercatat ke
+    // signal_pipeline_events (cuma masuk counter totalFailed + debugSamples yang hilang
+    // begitu response selesai). Sekarang pakai index eksplisit supaya failure tetap bisa
+    // direkam per stock_id (section 23.3: failure tidak boleh disamarkan sebagai NO SIGNAL).
+    for(let ri = 0; ri < results.length; ri++){
+      const r = results[ri];
+      const failedStockId = batch[ri]?.id;
       if (r.status !== 'fulfilled') {
         totalFailed++;
         debugSamples[`error-${totalFailed}`] = String(r.reason);
+        if (failedStockId) recordEvent(failedStockId, 'FAILED', {
+          reason: 'candle_or_indicator_fetch_failed',
+          detail: String(r.reason)
+        });
         continue;
       }
       const { stock, entry, confirm, bias } = r.value;
@@ -372,6 +423,7 @@ Deno.serve(async (req)=>{
       }
       const direction = allBullish ? 'BUY' : 'SELL';
       const entryPrice = structEntry.lastClose;
+      const dataSource = resolveDataSource(entry.candles);
       const zonesToPersist = [];
       if (direction === 'BUY') {
         const supportZone = nearestZoneBelow(structEntry.supportZones, entryPrice);
@@ -426,6 +478,11 @@ Deno.serve(async (req)=>{
         if (zoneErr) {
           totalFailed++;
           debugSamples[stock.ticker] = `zone_insert:${zoneErr}`;
+          recordEvent(stock.id, 'FAILED', {
+            reason: 'zone_insert_failed',
+            direction,
+            detail: zoneErr
+          });
           continue;
         }
         const { data: inserted, error: insErr } = await supabase.from('signals').insert({
@@ -451,6 +508,7 @@ Deno.serve(async (req)=>{
           entry_type: entryType,
           trigger_state: triggerState,
           overextension_status: overext.status,
+          data_source: dataSource,
           support_zone_id: zoneIds.get(zoneKey(supportZone)) ?? null,
           resistance_zone_id: zoneIds.get(zoneKey(resistanceZoneTp1)) ?? null,
           tp1_zone_id: zoneIds.get(zoneKey(resistanceZoneTp1)) ?? null,
@@ -487,7 +545,8 @@ Deno.serve(async (req)=>{
             },
             data_quality: {
               candle_count_entry: entry.candles.length,
-              candle_count_bias: bias.candles.length
+              candle_count_bias: bias.candles.length,
+              data_source: dataSource
             },
             formula_version: FORMULA_VERSION,
             generated_at: now.toISOString()
@@ -498,6 +557,11 @@ Deno.serve(async (req)=>{
         if (insErr || !inserted) {
           totalFailed++;
           debugSamples[stock.ticker] = String(insErr?.message);
+          recordEvent(stock.id, 'FAILED', {
+            reason: 'signal_insert_failed',
+            direction,
+            detail: insErr?.message
+          });
           continue;
         }
         if (oldActive && oldActive.length > 0) {
@@ -510,7 +574,8 @@ Deno.serve(async (req)=>{
         recordEvent(stock.id, 'BUY', {
           entry_type: entryType,
           trigger_state: triggerState,
-          tp2_reason: tp2Reason
+          tp2_reason: tp2Reason,
+          data_source: dataSource
         });
       } else {
         const resistanceZone = nearestZoneAbove(structEntry.resistanceZones, entryPrice);
@@ -569,6 +634,11 @@ Deno.serve(async (req)=>{
         if (zoneErr) {
           totalFailed++;
           debugSamples[stock.ticker] = `zone_insert:${zoneErr}`;
+          recordEvent(stock.id, 'FAILED', {
+            reason: 'zone_insert_failed',
+            direction,
+            detail: zoneErr
+          });
           continue;
         }
         const { data: inserted, error: insErr } = await supabase.from('signals').insert({
@@ -592,6 +662,7 @@ Deno.serve(async (req)=>{
           entry_type: null,
           trigger_state: breakdownState ?? resistanceTriggerState,
           overextension_status: null,
+          data_source: dataSource,
           bearish_type: bearishType,
           bearish_trigger: resistanceZone.mid_price,
           invalidation,
@@ -631,7 +702,8 @@ Deno.serve(async (req)=>{
             },
             data_quality: {
               candle_count_entry: entry.candles.length,
-              candle_count_bias: bias.candles.length
+              candle_count_bias: bias.candles.length,
+              data_source: dataSource
             },
             formula_version: FORMULA_VERSION,
             generated_at: now.toISOString()
@@ -642,6 +714,11 @@ Deno.serve(async (req)=>{
         if (insErr || !inserted) {
           totalFailed++;
           debugSamples[stock.ticker] = String(insErr?.message);
+          recordEvent(stock.id, 'FAILED', {
+            reason: 'signal_insert_failed',
+            direction,
+            detail: insErr?.message
+          });
           continue;
         }
         if (oldActive && oldActive.length > 0) {
@@ -654,16 +731,22 @@ Deno.serve(async (req)=>{
         recordEvent(stock.id, 'SELL', {
           bearish_type: bearishType,
           breakdown_state: breakdownState,
-          tp2_reason: tp2Reason
+          tp2_reason: tp2Reason,
+          data_source: dataSource
         });
       }
     }
   }
+  let pipelineEventError = null;
   for(let i = 0; i < pipelineEvents.length; i += PIPELINE_EVENT_CHUNK){
-    await supabase.from('signal_pipeline_events').insert(pipelineEvents.slice(i, i + PIPELINE_EVENT_CHUNK));
+    const { error: peErr } = await supabase.from('signal_pipeline_events').insert(pipelineEvents.slice(i, i + PIPELINE_EVENT_CHUNK));
+    if (peErr) {
+      pipelineEventError = peErr.message;
+      console.error('[generate-signals-mtf] gagal insert signal_pipeline_events:', peErr.message);
+    }
   }
   await supabase.from('job_runs').update({
-    status: 'success',
+    status: 'SUCCESS',
     finished_at: new Date().toISOString(),
     detail: {
       buy: totalBuy,
@@ -672,7 +755,8 @@ Deno.serve(async (req)=>{
       setup_invalid: totalSetupInvalid,
       overextended: totalOverextended,
       skipped: totalSkipped,
-      failed: totalFailed
+      failed: totalFailed,
+      pipeline_event_error: pipelineEventError
     }
   }).eq('id', jobRunId);
   return new Response(JSON.stringify({
@@ -692,6 +776,8 @@ Deno.serve(async (req)=>{
     overextended: totalOverextended,
     skipped_insufficient_data: totalSkipped,
     failed: totalFailed,
+    pipeline_events_recorded: pipelineEvents.length,
+    pipeline_event_error: pipelineEventError,
     debug_samples: debugSamples
   }), {
     headers: {
@@ -715,6 +801,8 @@ function zoneEvidence(z) {
     age_in_bars: z.age_in_bars
   };
 }
+// Insert zone-zone yang dipakai dalam keputusan signal ini sebagai immutable snapshot.
+// Dedup dalam satu call (zonesToPersist bisa mengandung zone yang sama).
 async function insertZones(supabase, stockId, zones, now) {
   const uniqueByKey = new Map();
   for (const z of zones)uniqueByKey.set(zoneKey(z), z);

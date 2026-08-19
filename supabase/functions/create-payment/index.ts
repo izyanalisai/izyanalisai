@@ -1,6 +1,8 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-// NOTE: Harga placeholder, WAJIB disesuaikan tim sebelum go-live.
-const PREMIUM_MONTHLY_PRICE_IDR = 49000;
+// FIX (audit 18 Agustus 2026): harga disesuaikan ke Rp59.000 sesuai Section 10.3 &
+// 26.1 poin 22 di spec v4.2 (grandfathered) -- sebelumnya masih placeholder 49.000
+// (komentar lama: "NOTE: Harga placeholder, WAJIB disesuaikan tim sebelum go-live").
+const PREMIUM_MONTHLY_PRICE_IDR = 59000;
 const METHOD_TO_MIDTRANS = {
   QRIS: [
     'qris'
