@@ -31,6 +31,35 @@ const CORS_HEADERS = {
 
 interface CallResult { text: string; modelUsed: string; usage: { input: number; output: number } }
 
+// FIX (19 Agustus 2026): root cause 502 "Edge Function returned a non-2xx status
+// code" di chat-asisten-ai -- 9Router kadang membalas format Server-Sent Events
+// ("data: {...}\n\ndata: {...}\n\ndata: [DONE]") walau stream tidak diminta,
+// tergantung provider underlying yang lagi dipakai (mis. NVIDIA NIM). res.json()
+// gagal parse ini ("Unexpected token 'd'..." / "Unexpected non-whitespace
+// character..."), function jadi throw dan return 502 ke client.
+// Perbaikan: (1) eksplisit minta stream:false, (2) tetap defensif -- kalau
+// providernya tetap balas SSE, parse manual sebagai fallback alih-alih crash.
+function parseSSEToContent(raw: string): { content: string; usage: { input: number; output: number } } {
+  let content = ''
+  let usage = { input: 0, output: 0 }
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('data:')) continue
+    const payload = trimmed.slice(5).trim()
+    if (!payload || payload === '[DONE]') continue
+    try {
+      const chunk = JSON.parse(payload)
+      const delta = chunk?.choices?.[0]?.delta?.content ?? chunk?.choices?.[0]?.message?.content
+      if (delta) content += delta
+      if (chunk?.usage) usage = { input: chunk.usage.prompt_tokens ?? usage.input, output: chunk.usage.completion_tokens ?? usage.output }
+    } catch {
+      // baris SSE individual yang tidak valid JSON -- skip, bukan fatal.
+      continue
+    }
+  }
+  return { content, usage }
+}
+
 // Pemanggil generik OpenAI-compatible chat/completions -- dipakai untuk 9Router
 // maupun OpenRouter karena keduanya OpenAI-compatible. providerLabel murni untuk log.
 async function callProvider(
@@ -51,7 +80,7 @@ async function callProvider(
           'Content-Type': 'application/json',
           ...extraHeaders,
         },
-        body: JSON.stringify({ model, messages, max_tokens: 800 }),
+        body: JSON.stringify({ model, messages, max_tokens: 800, stream: false }),
       })
       if (res.status === 429 || res.status === 402) {
         lastError = await res.text()
@@ -63,13 +92,26 @@ async function callProvider(
         console.error(`[chat-asisten-ai] [${providerLabel}] model ${model} gagal (${res.status}): ${lastError}`)
         continue
       }
-      const data = await res.json()
-      const text = data?.choices?.[0]?.message?.content ?? ''
+      const rawBody = await res.text()
+      let text = ''
+      let usageIn = 0, usageOut = 0
+      try {
+        const data = JSON.parse(rawBody)
+        text = data?.choices?.[0]?.message?.content ?? ''
+        usageIn = data?.usage?.prompt_tokens ?? 0
+        usageOut = data?.usage?.completion_tokens ?? 0
+      } catch {
+        console.error(`[chat-asisten-ai] [${providerLabel}] model ${model} balas non-JSON (kemungkinan SSE), coba parse manual`)
+        const parsed = parseSSEToContent(rawBody)
+        text = parsed.content
+        usageIn = parsed.usage.input
+        usageOut = parsed.usage.output
+      }
       if (!text) { lastError = 'response kosong'; console.error(`[chat-asisten-ai] [${providerLabel}] model ${model} kasih response kosong`); continue }
       return {
         text,
         modelUsed: `${providerLabel}:${model}`,
-        usage: { input: data?.usage?.prompt_tokens ?? 0, output: data?.usage?.completion_tokens ?? 0 },
+        usage: { input: usageIn, output: usageOut },
       }
     } catch (err) {
       lastError = err
