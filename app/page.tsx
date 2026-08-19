@@ -54,7 +54,7 @@ function getMarketStatus(nowWIB: Date) {
   const sesi1Open = 9 * 60
   const sesi1Close = 12 * 60
   const sesi2Open = 13 * 60 + 30
-  const sesi2Close = 15 * 60
+  const sesi2Close = 16 * 60
 
   if (isWeekday && ((minutes >= sesi1Open && minutes < sesi1Close) || (minutes >= sesi2Open && minutes < sesi2Close))) {
     const targetMinutes = minutes < sesi1Close ? sesi1Close : sesi2Close
