@@ -38,6 +38,28 @@ function wibDateString(d) {
   return new Date(d.getTime() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 const SYSTEM_PROMPT = 'Kamu adalah asisten analisa chart saham IDX untuk IzyAnalisAI. Tugasmu HANYA membaca chart secara visual: ' + 'arah tren (uptrend/downtrend/sideways), pola candlestick atau pola chart yang terlihat (mis. bullish engulfing, ' + 'double bottom, head and shoulders), dan kondisi umum momentum. ' + 'JANGAN PERNAH menyebut angka Entry, Buy Area, Stop Loss, Take Profit, Risk/Reward, Support, Resistance, atau ' + 'rekomendasi BUY/SELL/HOLD -- semua angka itu dihitung sistem lain, bukan tugasmu. ' + 'Balas HANYA dalam format JSON valid, tanpa markdown, dengan schema persis: ' + '{"narasi": "penjelasan 2-4 kalimat dalam Bahasa Indonesia", "pola": "nama pola singkat atau Tidak ada pola jelas"}';
+// FIX (19 Agustus 2026): root cause 500 "Gagal menganalisa chart" -- 9Router
+// kadang membalas format SSE ("data: {...}") walau stream tidak diminta,
+// tergantung provider underlying yang lagi dipakai. res.json() gagal parse ini
+// dan function throw. Perbaikan sama seperti chat-asisten-ai: minta stream:false
+// eksplisit, dan tetap defensif kalau providernya tetap balas SSE.
+function parseSSEToContent(raw) {
+  let content = '';
+  for (const line of raw.split('\n')){
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) continue;
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === '[DONE]') continue;
+    try {
+      const chunk = JSON.parse(payload);
+      const delta = chunk?.choices?.[0]?.delta?.content ?? chunk?.choices?.[0]?.message?.content;
+      if (delta) content += delta;
+    } catch  {
+      continue;
+    }
+  }
+  return content;
+}
 async function callVisionProvider(providerLabel, baseUrl, apiKey, models, imageBase64, mime, extraHeaders = {}) {
   let lastError = null;
   for (const model of models){
@@ -72,7 +94,8 @@ async function callVisionProvider(providerLabel, baseUrl, apiKey, models, imageB
               ]
             }
           ],
-          max_tokens: 500
+          max_tokens: 500,
+          stream: false
         })
       });
       if (res.status === 429 || res.status === 402) {
@@ -83,8 +106,15 @@ async function callVisionProvider(providerLabel, baseUrl, apiKey, models, imageB
         lastError = await res.text();
         continue;
       }
-      const data = await res.json();
-      const raw = data?.choices?.[0]?.message?.content ?? '';
+      const rawBody = await res.text();
+      let raw = '';
+      try {
+        const data = JSON.parse(rawBody);
+        raw = data?.choices?.[0]?.message?.content ?? '';
+      } catch {
+        console.error(`[analyze-chart] [${providerLabel}] model ${model} balas non-JSON (kemungkinan SSE), coba parse manual`);
+        raw = parseSSEToContent(rawBody);
+      }
       if (!raw) {
         lastError = 'response kosong';
         continue;

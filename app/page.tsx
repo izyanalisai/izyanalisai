@@ -45,16 +45,20 @@ function pctChange(price: number | null, prev: number | null) {
   return ((price - prev) / prev) * 100
 }
 
-// Jam bursa IDX (WIB): Sesi 1 09:00-12:00, Sesi 2 13:30-15:00 (hari kerja saja).
+// Jam bursa IDX (WIB): Sesi 1 09:00-12:00, Sesi 2 13:30-16:00 (Senin-Kamis).
+// Jumat: Sesi 1 09:00-11:30, Sesi 2 14:00-16:00 (istirahat sholat Jumat lebih panjang).
+// Catatan: 16:00 = jam tutup resmi BEI (mencakup pre-closing & post-closing).
+// Jika ingin memakai akhir continuous trading murni, ganti sesi2Close ke 15 * 60.
 function getMarketStatus(nowWIB: Date) {
   const day = nowWIB.getDay() // 0 Minggu - 6 Sabtu
   const minutes = nowWIB.getHours() * 60 + nowWIB.getMinutes()
   const isWeekday = day >= 1 && day <= 5
+  const isFriday = day === 5
 
   const sesi1Open = 9 * 60
-  const sesi1Close = 12 * 60
-  const sesi2Open = 13 * 60 + 30
-  const sesi2Close = 15 * 60
+  const sesi1Close = isFriday ? 11 * 60 + 30 : 12 * 60
+  const sesi2Open = isFriday ? 14 * 60 : 13 * 60 + 30
+  const sesi2Close = 16 * 60
 
   if (isWeekday && ((minutes >= sesi1Open && minutes < sesi1Close) || (minutes >= sesi2Open && minutes < sesi2Close))) {
     const targetMinutes = minutes < sesi1Close ? sesi1Close : sesi2Close

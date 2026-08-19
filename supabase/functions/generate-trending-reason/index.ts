@@ -28,6 +28,25 @@ function sanitizeReply(raw: string): string {
   return text
 }
 
+// FIX (19 Agustus 2026): 9Router kadang balas format SSE walau stream tidak
+// diminta -- res.json() gagal parse. Sama seperti fix di chat-asisten-ai/
+// analyze-chart: minta stream:false eksplisit + fallback parse manual.
+function parseSSEToContent(raw: string): string {
+  let content = ''
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('data:')) continue
+    const payload = trimmed.slice(5).trim()
+    if (!payload || payload === '[DONE]') continue
+    try {
+      const chunk = JSON.parse(payload)
+      const delta = chunk?.choices?.[0]?.delta?.content ?? chunk?.choices?.[0]?.message?.content
+      if (delta) content += delta
+    } catch { continue }
+  }
+  return content
+}
+
 async function callProvider(providerLabel: string, baseUrl: string, apiKey: string, models: string[], prompt: string, extraHeaders: Record<string, string> = {}) {
   let lastError: unknown = null
   for (const model of models) {
@@ -49,15 +68,26 @@ async function callProvider(providerLabel: string, baseUrl: string, apiKey: stri
             { role: 'user', content: prompt },
           ],
           max_tokens: 150,
+          stream: false,
         }),
       })
       clearTimeout(timer)
       if (res.status === 429 || res.status === 402 || !res.ok) { lastError = await res.text(); continue }
-      const data = await res.json()
-      const rawText = data?.choices?.[0]?.message?.content ?? ''
+      const rawBody = await res.text()
+      let rawText = ''
+      let usageIn = 0, usageOut = 0
+      try {
+        const data = JSON.parse(rawBody)
+        rawText = data?.choices?.[0]?.message?.content ?? ''
+        usageIn = data?.usage?.prompt_tokens ?? 0
+        usageOut = data?.usage?.completion_tokens ?? 0
+      } catch {
+        console.error(`[generate-trending-reason] [${providerLabel}] model ${model} balas non-JSON (kemungkinan SSE), coba parse manual`)
+        rawText = parseSSEToContent(rawBody)
+      }
       const text = sanitizeReply(rawText)
       if (!text) { lastError = 'response kosong setelah sanitize'; continue }
-      return { text, modelUsed: `${providerLabel}:${model}`, usage: { input: data?.usage?.prompt_tokens ?? 0, output: data?.usage?.completion_tokens ?? 0 } }
+      return { text, modelUsed: `${providerLabel}:${model}`, usage: { input: usageIn, output: usageOut } }
     } catch (err) {
       clearTimeout(timer)
       lastError = err
@@ -130,6 +160,7 @@ Deno.serve(async (req: Request) => {
     } catch (err) {
       failed++
       debugSamples[String(s.id)] = String(err)
+      console.error(`[generate-trending-reason] gagal untuk stock ${s.id} (${s.ticker}):`, err)
     }
   }
 

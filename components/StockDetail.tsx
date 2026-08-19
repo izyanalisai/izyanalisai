@@ -48,6 +48,29 @@ type Wallet = {
   ad_unlock_count: number
 }
 
+type Indicator = {
+  ema5: number | null
+  ema9: number | null
+  ema21: number | null
+  ema50: number | null
+  rsi14: number | null
+  macd_line: number | null
+  macd_signal: number | null
+  macd_hist: number | null
+  stoch_k: number | null
+  stoch_d: number | null
+  volume_avg20: number | null
+  updated_at: string | null
+}
+
+type Fundamental = {
+  pe_ratio: number | null
+  pb_ratio: number | null
+  net_profit: number | null
+  market_cap: number | null
+  updated_at: string | null
+}
+
 const directionStyle: Record<string, { bg: string; text: string; label: string }> = {
   BUY: { bg: 'bg-[#22C55E]/15', text: 'text-[#22C55E]', label: 'BUY' },
   SELL: { bg: 'bg-[#EF4444]/15', text: 'text-[#EF4444]', label: 'SELL' },
@@ -104,6 +127,8 @@ export default function StockDetail({ ticker }: { ticker: string }) {
   const [unlockLoading, setUnlockLoading] = useState(false)
   const [unlockMsg, setUnlockMsg] = useState<string | null>(null)
   const [showChartUpload, setShowChartUpload] = useState(false)
+  const [indicator, setIndicator] = useState<Indicator | null>(null)
+  const [fundamental, setFundamental] = useState<Fundamental | null>(null)
 
   const loadSignal = useCallback(async (stockId: string, tier: SignalTier) => {
     const { data, error } = await supabase.rpc('get_signal_for_stock', { p_stock_id: stockId, p_tier: tier })
@@ -147,6 +172,25 @@ export default function StockDetail({ ticker }: { ticker: string }) {
       if (active) setQuote(quoteData)
 
       await loadSignal(stockData.id, signalTier)
+
+      // Fetch indikator teknikal (D1 terbaru)
+      const { data: indData } = await supabase
+        .from('indicators')
+        .select('ema5, ema9, ema21, ema50, rsi14, macd_line, macd_signal, macd_hist, stoch_k, stoch_d, volume_avg20, updated_at')
+        .eq('stock_id', stockData.id)
+        .eq('timeframe', 'D1')
+        .order('ts', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (active && indData) setIndicator(indData as Indicator)
+
+      // Fetch fundamental
+      const { data: fundData } = await supabase
+        .from('fundamentals')
+        .select('pe_ratio, pb_ratio, net_profit, market_cap, updated_at')
+        .eq('stock_id', stockData.id)
+        .maybeSingle()
+      if (active && fundData) setFundamental(fundData as Fundamental)
 
       if (userData.user) {
         await loadWallet()
@@ -516,8 +560,54 @@ export default function StockDetail({ ticker }: { ticker: string }) {
         </div>
 
         <div className="rounded-xl bg-white/5 border border-white/10 px-4 py-4">
-          <h2 className="font-semibold text-sm mb-2">Indikator & Fundamental</h2>
-          <p className="text-slate-500 text-sm">Data indikator dan fundamental menyusul.</p>
+          <h2 className="font-semibold text-sm mb-3">Indikator & Fundamental</h2>
+
+          {!indicator && !fundamental && (
+            <p className="text-slate-500 text-sm">Data belum tersedia.</p>
+          )}
+
+          {indicator && (
+            <div className="mb-4">
+              <p className="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wide">Teknikal (D1)</p>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: 'RSI 14', value: indicator.rsi14?.toFixed(1),
+                    color: indicator.rsi14 != null ? (indicator.rsi14 > 70 ? 'text-[#EF4444]' : indicator.rsi14 < 30 ? 'text-[#22C55E]' : 'text-white') : '' },
+                  { label: 'EMA 50', value: indicator.ema50 != null ? formatHarga(Math.round(indicator.ema50)) : null, color: 'text-white' },
+                  { label: 'EMA 21', value: indicator.ema21 != null ? formatHarga(Math.round(indicator.ema21)) : null, color: 'text-white' },
+                  { label: 'MACD', value: indicator.macd_line?.toFixed(2),
+                    color: indicator.macd_line != null ? (indicator.macd_line > 0 ? 'text-[#22C55E]' : 'text-[#EF4444]') : '' },
+                  { label: 'Stoch %K', value: indicator.stoch_k?.toFixed(1),
+                    color: indicator.stoch_k != null ? (indicator.stoch_k > 80 ? 'text-[#EF4444]' : indicator.stoch_k < 20 ? 'text-[#22C55E]' : 'text-white') : '' },
+                  { label: 'Vol Avg20', value: indicator.volume_avg20 != null ? (indicator.volume_avg20 / 1_000_000).toFixed(1) + 'M' : null, color: 'text-white' },
+                ].map(({ label, value, color }) => (
+                  <div key={label} className="rounded-lg bg-white/5 px-2.5 py-2">
+                    <p className="text-slate-500 text-[10px]">{label}</p>
+                    <p className={`text-sm font-medium ${color}`}>{value ?? '-'}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {fundamental && (
+            <div>
+              <p className="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wide">Fundamental</p>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { label: 'P/E Ratio', value: fundamental.pe_ratio != null ? Number(fundamental.pe_ratio).toFixed(2) + 'x' : null },
+                  { label: 'P/B Ratio', value: fundamental.pb_ratio != null ? Number(fundamental.pb_ratio).toFixed(2) + 'x' : null },
+                  { label: 'Net Profit', value: fundamental.net_profit != null ? 'Rp ' + (Number(fundamental.net_profit) / 1_000_000_000).toFixed(1) + 'B' : null },
+                  { label: 'Market Cap', value: fundamental.market_cap != null ? 'Rp ' + (Number(fundamental.market_cap) / 1_000_000_000_000).toFixed(2) + 'T' : null },
+                ].map(({ label, value }) => (
+                  <div key={label} className="rounded-lg bg-white/5 px-2.5 py-2">
+                    <p className="text-slate-500 text-[10px]">{label}</p>
+                    <p className="text-sm font-medium">{value ?? '-'}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {watchlistMsg && <p className="text-[#EF4444] text-sm">{watchlistMsg}</p>}

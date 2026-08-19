@@ -103,8 +103,14 @@ const TICKER_SET = new Set(STATIC_TICKERS)
 
 // Tier 1: 9Router (self-hosted di Railway, OpenAI-compatible) -- provider utama.
 // Tier 2: OpenRouter, 3 model gratis -- fallback kalau 9Router gagal total.
+// FIX (19 Agustus 2026): default SEBELUMNYA adalah 'auto', tapi itu bukan model id
+// yang valid -- 9Router meneruskan literal "auto" ke provider (OpenAI) dan
+// provider menolak dengan 404 "The model `auto` does not exist or you do not have
+// access to it" (bug sama persis dengan chat-asisten-ai & analyze-chart, lihat log
+// 2026-08-19T00:28:54). Ganti ke model yang sudah terbukti jalan (dipakai
+// generate-signal-reasoning, sukses ratusan kali di log ai_usage).
 const NINEROUTER_MODELS = [
-  Deno.env.get('NINEROUTER_MODEL') || 'auto',
+  Deno.env.get('NINEROUTER_MODEL') || 'groq/openai/gpt-oss-120b',
 ]
 
 const FREE_MODELS = [

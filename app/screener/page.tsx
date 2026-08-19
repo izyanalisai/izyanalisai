@@ -20,6 +20,9 @@ type Stock = {
   } | null
 }
 
+// Map stock_id -> { direction, signal_tier }
+type SignalMap = Record<string, { direction: 'BUY' | 'SELL'; signal_tier: string }>
+
 type MarketCapFilter = 'ALL' | 'SMALL' | 'MID' | 'BIG'
 type VolumeFilter = 'ALL' | 'RENDAH' | 'SEDANG' | 'TINGGI'
 type ViewMode = 'HEATMAP' | 'LIST' | 'ROTATION'
@@ -34,7 +37,6 @@ function pctChange(price: number | null, prev: number | null) {
   return ((price - prev) / prev) * 100
 }
 
-// Threshold sesuai spesifikasi: Small <2T, Mid 2-10T, Big >10T
 function marketCapBucket(cap: number | null): MarketCapFilter | null {
   if (cap === null || cap === undefined) return null
   if (cap < 2_000_000_000_000) return 'SMALL'
@@ -51,8 +53,6 @@ function percentile(sorted: number[], p: number) {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo)
 }
 
-// Warna heatmap: intensitas mengikuti besar %, hijau naik / merah turun,
-// abu-abu kalau data belum ada.
 function heatColor(pct: number | null) {
   if (pct === null) return 'rgba(148,163,184,0.15)'
   const clamped = Math.max(-5, Math.min(5, pct))
@@ -61,11 +61,28 @@ function heatColor(pct: number | null) {
   return pct >= 0 ? `rgba(34,197,94,${alpha})` : `rgba(239,68,68,${alpha})`
 }
 
+// Badge BUY/SELL kecil
+function SignalBadge({ direction, tier }: { direction: 'BUY' | 'SELL'; tier: string }) {
+  const isBuy = direction === 'BUY'
+  return (
+    <span
+      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+        isBuy
+          ? 'bg-[#22C55E]/15 text-[#22C55E]'
+          : 'bg-[#EF4444]/15 text-[#EF4444]'
+      }`}
+    >
+      {direction}
+    </span>
+  )
+}
+
 export default function ScreenerPage() {
   const supabase = createClient()
 
   const [stocks, setStocks] = useState<Stock[]>([])
   const [sectors, setSectors] = useState<Sector[]>([])
+  const [signalMap, setSignalMap] = useState<SignalMap>({})
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
   const [activeSector, setActiveSector] = useState<string | null>(null)
@@ -92,7 +109,7 @@ export default function ScreenerPage() {
     let active = true
 
     async function load() {
-      const [stocksRes, sectorsRes] = await Promise.all([
+      const [stocksRes, sectorsRes, signalsRes] = await Promise.all([
         supabase
           .from('stocks')
           .select(
@@ -101,22 +118,29 @@ export default function ScreenerPage() {
           .eq('is_active', true)
           .order('ticker'),
         supabase.from('sectors').select('id, name').order('name'),
+        supabase.rpc('get_active_signal_map'),
       ])
 
       if (!active) return
+
       setStocks((stocksRes.data as unknown as Stock[]) ?? [])
       setSectors(sectorsRes.data ?? [])
+
+      // Build map stock_id -> { direction, signal_tier }
+      const map: SignalMap = {}
+      if (signalsRes.data) {
+        for (const row of signalsRes.data as { stock_id: string; direction: 'BUY' | 'SELL'; signal_tier: string }[]) {
+          map[row.stock_id] = { direction: row.direction, signal_tier: row.signal_tier }
+        }
+      }
+      setSignalMap(map)
       setLoading(false)
     }
 
     load()
-    return () => {
-      active = false
-    }
+    return () => { active = false }
   }, [])
 
-  // Kuartil volume dihitung dari seluruh saham aktif yang punya data volume,
-  // sesuai definisi: Rendah <P25, Sedang P25-P75, Tinggi >=P75
   const volumeQuartiles = useMemo(() => {
     const volumes = stocks
       .map((s) => s.quotes?.volume)
@@ -132,11 +156,6 @@ export default function ScreenerPage() {
     return 'TINGGI'
   }
 
-  // Filter Market Cap/Volume/Search dipakai bersama oleh List DAN Heatmap.
-  // Sebelumnya filter ini hanya diterapkan ke `filtered` (dipakai List view),
-  // sehingga di tab Heatmap tombol filter berubah state tapi tidak berefek
-  // ke tampilan (bug: "tombol kosong"). Sekarang Heatmap ikut memakai
-  // `commonFiltered` yang sama sebagai dasar agregasi per sektor.
   const commonFiltered = useMemo(() => {
     let list = stocks
 
@@ -168,9 +187,6 @@ export default function ScreenerPage() {
     return list.slice(0, 50)
   }, [commonFiltered, activeSector])
 
-  // Agregat per sektor untuk heatmap: rata-rata persen perubahan.
-  // Memakai commonFiltered supaya filter Market Cap/Volume/Search juga
-  // mempengaruhi tampilan Heatmap, bukan hanya tab List.
   const sectorHeat = useMemo(() => {
     return sectors.map((sector) => {
       const members = commonFiltered.filter((s) => s.sector_id === sector.id)
@@ -207,7 +223,6 @@ export default function ScreenerPage() {
         className="w-full mt-4 rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm placeholder:text-slate-500 focus:outline-none focus:border-[#3B82F6]"
       />
 
-      {/* Toggle view: Heatmap (default) vs List */}
       <div className="mt-4 flex gap-2">
         <button
           onClick={() => setView('HEATMAP')}
@@ -232,7 +247,6 @@ export default function ScreenerPage() {
         </button>
       </div>
 
-      {/* Filter Market Cap & Volume */}
       <div className="mt-4 space-y-2">
         <div>
           <p className="text-slate-500 text-[11px] mb-1.5">Market Cap</p>
@@ -280,7 +294,6 @@ export default function ScreenerPage() {
         </div>
       </div>
 
-      {/* Filter Sektor (dipakai di view List) */}
       {view === 'LIST' &&
         (hasSectorData ? (
           <div className="mt-4 flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
@@ -373,6 +386,7 @@ export default function ScreenerPage() {
             const prev = stock.quotes?.previous_close ?? null
             const pct = pctChange(price, prev)
             const up = pct !== null && pct >= 0
+            const signal = signalMap[stock.id]
 
             return (
               <Link
@@ -381,7 +395,12 @@ export default function ScreenerPage() {
                 className="flex items-center justify-between rounded-xl bg-white/5 border border-white/10 px-4 py-3 hover:border-[#8B5CF6] transition-colors duration-200"
               >
                 <div className="min-w-0">
-                  <p className="font-semibold text-sm">{stock.ticker}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-semibold text-sm">{stock.ticker}</p>
+                    {signal && (
+                      <SignalBadge direction={signal.direction} tier={signal.signal_tier} />
+                    )}
+                  </div>
                   <p className="text-slate-400 text-xs truncate">{stock.name}</p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -409,4 +428,4 @@ export default function ScreenerPage() {
       )}
     </main>
   )
-}
+        }
