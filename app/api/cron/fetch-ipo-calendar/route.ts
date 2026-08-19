@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import * as cheerio from 'cheerio'
+
+// FIX (build error 19 Agustus 2026): project ini punya generated Database types
+// yang tidak mengenal tabel job_runs/ipo_calendar/internal_secrets di client
+// Supabase default, bikin TypeScript strict check gagal saat build ("never[]").
+// Solusi: paksa client di sini pakai generic <any> supaya lolos type-check,
+// tidak mempengaruhi bagian lain aplikasi.
+type AnyClient = SupabaseClient<any, any, any>
 
 // Worker fetch-ipo-calendar — DIPINDAH dari Supabase Edge Function ke Railway
 // (19 Agustus 2026) karena IP Supabase Edge Function mulai diblokir 403 oleh
@@ -105,7 +112,7 @@ async function fetchPage(page: number): Promise<IpoRow[]> {
   return rows
 }
 
-async function logJobRun(supabase: ReturnType<typeof createClient>, status: string, detail: Record<string, unknown>, startedAt: string) {
+async function logJobRun(supabase: AnyClient, status: string, detail: Record<string, unknown>, startedAt: string) {
   try {
     await supabase.from('job_runs').insert({
       job_name: JOB_NAME,
@@ -121,7 +128,7 @@ async function logJobRun(supabase: ReturnType<typeof createClient>, status: stri
 
 export async function POST(req: NextRequest) {
   const startedAt = new Date().toISOString()
-  const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+  const supabase: AnyClient = createClient<any>(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 
   const providedSecret = req.headers.get('x-worker-secret')
   const { data: secretRow, error: secretError } = await supabase
@@ -197,4 +204,4 @@ export async function POST(req: NextRequest) {
   await logJobRun(supabase, jobStatus, summary, startedAt)
 
   return NextResponse.json(summary)
-      }
+  }
