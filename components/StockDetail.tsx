@@ -71,6 +71,35 @@ type Fundamental = {
   updated_at: string | null
 }
 
+type WatchState = {
+  state: string
+  reason: string | null
+  support_level: number | null
+  resistance_level: number | null
+  watch_direction: string | null
+  watch_zone_low: number | null
+  watch_zone_high: number | null
+  bias: string | null
+  last_close: number | null
+  data_source: string | null
+  updated_at: string | null
+  rsi14: number | null
+  ema21: number | null
+  ema50: number | null
+  macd_line: number | null
+  macd_signal: number | null
+  volume_avg20: number | null
+}
+
+const NETRAL_REASON_LABEL: Record<string, string> = {
+  no_timeframe_confluence: 'Timeframe D1 dan W1 belum selaras untuk entry.',
+  no_clear_bias: 'Bias arah belum jelas — struktur harga masih sideways.',
+  overextended: 'Harga sudah terlalu jauh dari area entry struktural.',
+  insufficient_data: 'Data candle belum cukup untuk analisa struktural.',
+  setup_invalid: 'Setup tidak memenuhi aturan entry yang valid.',
+  data_quality: 'Kualitas data tidak memenuhi syarat untuk generate sinyal.',
+}
+
 const directionStyle: Record<string, { bg: string; text: string; label: string }> = {
   BUY: { bg: 'bg-[#22C55E]/15', text: 'text-[#22C55E]', label: 'BUY' },
   SELL: { bg: 'bg-[#EF4444]/15', text: 'text-[#EF4444]', label: 'SELL' },
@@ -129,10 +158,14 @@ export default function StockDetail({ ticker }: { ticker: string }) {
   const [showChartUpload, setShowChartUpload] = useState(false)
   const [indicator, setIndicator] = useState<Indicator | null>(null)
   const [fundamental, setFundamental] = useState<Fundamental | null>(null)
+  const [watchState, setWatchState] = useState<WatchState | null>(null)
 
   const loadSignal = useCallback(async (stockId: string, tier: SignalTier) => {
     const { data, error } = await supabase.rpc('get_signal_for_stock', { p_stock_id: stockId, p_tier: tier })
     if (!error) setSignal(data as SignalRpcResult | null)
+    // Selalu load watch state juga (untuk NETRAL display)
+    const { data: wsData } = await supabase.rpc('get_watch_state_for_stock', { p_stock_id: stockId, p_tier: tier })
+    if (wsData) setWatchState(wsData as WatchState)
   }, [supabase])
 
   const loadWallet = useCallback(async () => {
@@ -445,7 +478,93 @@ export default function StockDetail({ ticker }: { ticker: string }) {
           </div>
 
           {!signal && (
-            <p className="text-slate-500 text-sm">Belum ada sinyal {tierLabel[signalTier]} aktif untuk {stock.ticker}.</p>
+            <div className="space-y-3">
+              {/* Badge NETRAL */}
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 rounded-full text-xs font-bold bg-slate-500/20 text-slate-400 border border-slate-500/30">
+                  NETRAL
+                </span>
+                <span className="text-slate-500 text-xs">Analisa Struktur</span>
+              </div>
+
+              {/* Alasan */}
+              {watchState?.reason && (
+                <div className="rounded-lg bg-white/5 px-3 py-2 border border-white/5">
+                  <p className="text-slate-500 text-xs mb-1">Kondisi Pasar</p>
+                  <p className="text-sm text-slate-300">
+                    {NETRAL_REASON_LABEL[watchState.reason] ?? watchState.reason}
+                  </p>
+                </div>
+              )}
+
+              {/* Support & Resistance */}
+              {(watchState?.support_level || watchState?.resistance_level) && (
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-lg bg-white/5 px-3 py-2">
+                    <p className="text-slate-500 text-xs">Support Terdekat</p>
+                    <p className="font-medium text-[#22C55E]">{formatHarga(watchState.support_level)}</p>
+                  </div>
+                  <div className="rounded-lg bg-white/5 px-3 py-2">
+                    <p className="text-slate-500 text-xs">Resistance Terdekat</p>
+                    <p className="font-medium text-[#EF4444]">{formatHarga(watchState.resistance_level)}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Potensi Entry Bersyarat */}
+              {watchState?.watch_direction && watchState?.watch_zone_low && (
+                <div className="rounded-lg bg-white/5 px-3 py-2 border border-white/5">
+                  <p className="text-slate-500 text-xs mb-1">Potensi Entry Bersyarat</p>
+                  <p className="text-sm text-slate-300">
+                    {watchState.watch_direction === 'BUY'
+                      ? `Jika harga koreksi ke area ${formatHarga(watchState.watch_zone_low)}–${formatHarga(watchState.watch_zone_high)}, setup BUY berpotensi terbentuk.`
+                      : `Jika harga breakdown di bawah ${formatHarga(watchState.watch_zone_low)}, setup SELL berpotensi terbentuk.`}
+                  </p>
+                </div>
+              )}
+
+              {/* Indikator Teknikal */}
+              {(watchState?.rsi14 || indicator?.rsi14) && (
+                <div className="space-y-1">
+                  <p className="text-slate-500 text-xs uppercase tracking-wide">Indikator Teknikal</p>
+                  <div className="grid grid-cols-3 gap-2 text-sm">
+                    <div className="rounded-lg bg-white/5 px-3 py-2">
+                      <p className="text-slate-500 text-xs">RSI 14</p>
+                      <p className={`font-medium ${
+                        (watchState?.rsi14 ?? indicator?.rsi14 ?? 50) > 70 ? 'text-[#EF4444]' :
+                        (watchState?.rsi14 ?? indicator?.rsi14 ?? 50) < 30 ? 'text-[#22C55E]' : 'text-white'
+                      }`}>
+                        {(watchState?.rsi14 ?? indicator?.rsi14)?.toFixed(1) ?? '-'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-white/5 px-3 py-2">
+                      <p className="text-slate-500 text-xs">EMA 21</p>
+                      <p className="font-medium">{formatHarga(watchState?.ema21 ?? indicator?.ema21)}</p>
+                    </div>
+                    <div className="rounded-lg bg-white/5 px-3 py-2">
+                      <p className="text-slate-500 text-xs">EMA 50</p>
+                      <p className="font-medium">{formatHarga(watchState?.ema50 ?? indicator?.ema50)}</p>
+                    </div>
+                  </div>
+                  {(watchState?.volume_avg20 ?? indicator?.volume_avg20) && (
+                    <div className="rounded-lg bg-white/5 px-3 py-2 text-sm">
+                      <p className="text-slate-500 text-xs">Volume Avg 20</p>
+                      <p className="font-medium">{formatHarga(watchState?.volume_avg20 ?? indicator?.volume_avg20)}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Fallback jika tidak ada watch state sama sekali */}
+              {!watchState && (
+                <p className="text-slate-500 text-sm">Data struktur belum tersedia untuk {stock.ticker} — akan diperbarui malam ini.</p>
+              )}
+
+              {/* DYOR */}
+              <p className="text-slate-600 text-xs pt-1">
+                NETRAL bukan berarti tidak ada analisa. Pantau kembali setelah update berikutnya. DYOR.
+              </p>
+            </div>
           )}
 
           {signal && (

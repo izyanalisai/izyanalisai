@@ -190,6 +190,10 @@ async function classifyWithProvider(
           temperature: 0.1,
           max_tokens: 200,
         }),
+        // FIX (20 Agustus 2026): tambahan timeout 20 detik per panggilan AI classify --
+        // sebelumnya tidak ada timeout di sini juga, jadi kalau 9Router/OpenRouter hang,
+        // proses per artikel bisa nyangkut lama dan tetap bisa memicu timeout cron.
+        signal: AbortSignal.timeout(20000),
       })
 
       if (res.status === 429 || res.status === 402 || !res.ok) continue

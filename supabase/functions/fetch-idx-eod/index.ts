@@ -1,31 +1,13 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-// Worker IDX EOD (OTOMATIS) - dibuat 17 Agustus 2026, diperbaiki 18 Agustus 2026,
-// diperbaiki lagi 19 Agustus 2026 (fix upsert idx_eod_uploads, lihat bawah).
-// Sumber: endpoint JSON resmi di balik halaman "Ringkasan Saham" idx.co.id
-// (ditemukan via probe-idx-eod v21 setelah fix js_scenario). Endpoint ini di
-// belakang Cloudflare JS-challenge, jadi WAJIB lewat ScrapingBee (render_js +
-// premium_proxy) -- ini charge credit tiap panggilan (akun ScrapingBee saat ini
-// masih TRIAL, expired 1 Sept 2026, makanya job ini didesain untuk GAGAL DENGAN
-// AMAN kalau ScrapingBee error/quota habis: hanya log job_runs ERROR, tidak
-// pernah menyentuh data -- sistem otomatis tetap jalan pakai Yahoo Fallback
-// seperti sebelumnya (sesuai Section 3.2 dokumen spec).
-//
-// FIX 18 Agustus 2026: root cause data selalu SKIPPED (sampleDate beku di
-// 2026-08-14 terus menerus) adalah karena target URL dipanggil TANPA parameter
-// `date`, sehingga endpoint IDX mengembalikan snapshot default/cache lama yang
-// sama terus-menerus alih-alih data terbaru. Endpoint resmi (didokumentasikan
-// publik di berbagai integrasi pihak ketiga) menerima date=YYYYMMDD eksplisit.
-// Perbaikan: selalu kirim date=<expectedDate dalam YYYYMMDD> ke target URL.
-//
-// FIX 19 Agustus 2026: tabel idx_eod_uploads punya UNIQUE(trade_date), tapi kode
-// sebelumnya pakai .insert() biasa TANPA cek error hasilnya. Begitu ada 1 baris
-// (misal FAILED) untuk tanggal tertentu, percobaan berikutnya untuk tanggal yang
-// sama -- termasuk yang SUKSES dapat data -- gagal nulis log karena conflict
-// unique key, dan errornya ditelan diam-diam. Akibatnya log idx_eod_uploads bisa
-// terlihat "gagal terus" padahal data aslinya sudah benar masuk ke quotes/candles.
-// Perbaikan: ganti semua .insert() ke .upsert(..., {onConflict:'trade_date'})
-// supaya baris log per tanggal selalu mencerminkan hasil percobaan TERAKHIR.
+// Worker IDX EOD (OTOMATIS) - dibuat 17 Agustus 2026, diperbaiki 18-19 Agustus 2026,
+// MIGRASI KE SCRAPERAPI 20 Agustus 2026 (ganti dari ScrapingBee yang trial/limited).
+// Sumber: endpoint JSON resmi di balik halaman "Ringkasan Saham" idx.co.id.
+// Endpoint ini di belakang Cloudflare JS-challenge, jadi WAJIB lewat ScraperAPI
+// (render=true + premium=true) -- ini charge credit tiap panggilan. Job ini
+// didesain untuk GAGAL DENGAN AMAN kalau ScraperAPI error/quota habis: hanya
+// log job_runs ERROR, tidak pernah menyentuh data -- sistem otomatis tetap
+// jalan pakai Yahoo Fallback seperti sebelumnya (sesuai Section 3.2 spec).
 function todayWIB() {
   const now = new Date();
   const wib = new Date(now.getTime() + 7 * 60 * 60 * 1000);
@@ -34,28 +16,29 @@ function todayWIB() {
 function toCompactDate(isoDate) {
   return isoDate.replaceAll('-', '');
 }
-async function fetchViaScrapingBee(sbKey, targetPath, expectedDateCompact) {
+async function fetchViaScraperAPI(saKey, targetPath, expectedDateCompact) {
   const targetUrl = `https://www.idx.co.id${targetPath}?date=${expectedDateCompact}&length=9999&start=0`;
   const qs = new URLSearchParams({
-    api_key: sbKey,
+    api_key: saKey,
     url: targetUrl,
-    render_js: 'true',
-    premium_proxy: 'true',
-    forward_headers: 'true'
+    render: 'true',
+    premium: 'true',
+    keep_headers: 'true',
+    country_code: 'id'
   });
-  const sbRes = await fetch(`https://app.scrapingbee.com/api/v1/?${qs.toString()}`, {
+  const saRes = await fetch(`https://api.scraperapi.com/?${qs.toString()}`, {
     method: 'GET',
     headers: {
-      'Spb-Forward-Referer': 'https://www.idx.co.id/id/data-pasar/ringkasan-perdagangan/ringkasan-saham/',
-      'Spb-Forward-Accept': 'application/json',
-      'Spb-Forward-Cache-Control': 'no-cache'
+      'Referer': 'https://www.idx.co.id/id/data-pasar/ringkasan-perdagangan/ringkasan-saham/',
+      'Accept': 'application/json',
+      'Cache-Control': 'no-cache'
     }
   });
-  const bodyText = await sbRes.text();
-  if (!sbRes.ok) {
+  const bodyText = await saRes.text();
+  if (!saRes.ok) {
     return {
       ok: false,
-      status: sbRes.status,
+      status: saRes.status,
       json: null,
       bodyText
     };
@@ -64,14 +47,14 @@ async function fetchViaScrapingBee(sbKey, targetPath, expectedDateCompact) {
     const json = JSON.parse(bodyText);
     return {
       ok: true,
-      status: sbRes.status,
+      status: saRes.status,
       json,
       bodyText
     };
   } catch (e) {
     return {
       ok: false,
-      status: sbRes.status,
+      status: saRes.status,
       json: null,
       bodyText: `parse json gagal: ${e}`
     };
@@ -88,10 +71,10 @@ Deno.serve(async (req)=>{
       status: 401
     });
   }
-  const { data: sbKeyRow } = await admin.from('internal_secrets').select('value').eq('key', 'scrapingbee_api_key').maybeSingle();
-  const sbKey = sbKeyRow?.value;
-  if (!sbKey) return new Response(JSON.stringify({
-    error: 'scrapingbee_api_key belum di-set'
+  const { data: saKeyRow } = await admin.from('internal_secrets').select('value').eq('key', 'scraperapi_api_key').maybeSingle();
+  const saKey = saKeyRow?.value;
+  if (!saKey) return new Response(JSON.stringify({
+    error: 'scraperapi_api_key belum di-set'
   }), {
     status: 500
   });
@@ -102,11 +85,11 @@ Deno.serve(async (req)=>{
   const targetPath = '/primary/TradingSummary/GetStockSummary';
   let result;
   try {
-    result = await fetchViaScrapingBee(sbKey, targetPath, expectedDateCompact);
+    result = await fetchViaScraperAPI(saKey, targetPath, expectedDateCompact);
   } catch (e) {
     const { error: logErr } = await admin.from('idx_eod_uploads').upsert({
       trade_date: expectedDate,
-      file_name: 'auto:scrapingbee',
+      file_name: 'auto:scraperapi',
       row_count: 0,
       matched_count: 0,
       status: 'FAILED',
@@ -125,7 +108,7 @@ Deno.serve(async (req)=>{
   if (!result.ok) {
     const { error: logErr } = await admin.from('idx_eod_uploads').upsert({
       trade_date: expectedDate,
-      file_name: 'auto:scrapingbee',
+      file_name: 'auto:scraperapi',
       row_count: 0,
       matched_count: 0,
       status: 'FAILED',
@@ -245,7 +228,7 @@ Deno.serve(async (req)=>{
   });
   const { error: logErr } = await admin.from('idx_eod_uploads').upsert({
     trade_date: expectedDate,
-    file_name: 'auto:scrapingbee',
+    file_name: 'auto:scraperapi',
     row_count: rows.length,
     matched_count: matched,
     unmatched_tickers: Array.from(new Set(unmatched)).slice(0, 50),

@@ -1,9 +1,18 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-const PUBLIC_PATHS = ['/landing', '/onboarding', '/login', '/daftar', '/auth', '/lupa-password', '/reset-password']
+const PUBLIC_PATHS = ['/', '/landing', '/onboarding', '/login', '/daftar', '/auth', '/lupa-password', '/reset-password']
 
 export async function proxy(request: NextRequest) {
+  const path = request.nextUrl.pathname
+  const isPublic = PUBLIC_PATHS.some((p) => path === p || path.startsWith(p + '/'))
+
+  // Lewati pengecekan Supabase auth sepenuhnya untuk halaman publik
+  // (termasuk crawler seperti Googlebot/Mediapartners-Google)
+  if (isPublic) {
+    return NextResponse.next({ request })
+  }
+
   let response = NextResponse.next({ request })
 
   const supabase = createServerClient(
@@ -29,10 +38,7 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  const path = request.nextUrl.pathname
-  const isPublic = PUBLIC_PATHS.some((p) => path === p || path.startsWith(p + '/'))
-
-  if (!user && !isPublic) {
+  if (!user) {
     const url = request.nextUrl.clone()
     url.pathname = '/landing'
     return NextResponse.redirect(url)
