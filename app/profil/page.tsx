@@ -7,6 +7,8 @@ import type { User } from '@supabase/supabase-js'
 import { useTheme, useLang, type Lang } from '@/lib/preferences'
 import PlexusBackground from '@/components/PlexusBackground'
 
+const TELEGRAM_BOT_USERNAME = 'izyanalisai_bot'
+
 type Profile = {
   full_name: string | null
   risk_profile: string | null
@@ -94,6 +96,137 @@ function ThemeLangControls() {
     </>
   )
 }
+
+// ── Hubungkan Telegram (spec v5.0 section 19) ──────────────────────────────
+type TelegramStatus = 'idle' | 'loading' | 'has_code' | 'connected' | 'error'
+
+function HubungkanTelegram({ userId }: { userId: string }) {
+  const supabase = createClient()
+  const [status, setStatus] = useState<TelegramStatus>('idle')
+  const [code, setCode] = useState<string | null>(null)
+  const [isConnected, setIsConnected] = useState(false)
+  const [checkingInitial, setCheckingInitial] = useState(true)
+
+  useEffect(() => {
+    let active = true
+    async function checkStatus() {
+      const { data } = await supabase
+        .from('telegram_subscriptions')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .maybeSingle()
+      if (!active) return
+      setIsConnected(!!data)
+      setCheckingInitial(false)
+    }
+    checkStatus()
+    return () => {
+      active = false
+    }
+  }, [userId])
+
+  const handleGenerateCode = async () => {
+    setStatus('loading')
+    const { data, error } = await supabase.rpc('generate_telegram_link_code')
+    if (error || !data) {
+      setStatus('error')
+      return
+    }
+    setCode(data as string)
+    setStatus('has_code')
+
+    const interval = setInterval(async () => {
+      const { data: sub } = await supabase
+        .from('telegram_subscriptions')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .maybeSingle()
+      if (sub) {
+        clearInterval(interval)
+        setIsConnected(true)
+        setStatus('connected')
+      }
+    }, 3000)
+    setTimeout(() => clearInterval(interval), 15 * 60 * 1000)
+  }
+
+  const handleDisconnect = async () => {
+    await supabase.from('telegram_subscriptions').update({ is_active: false }).eq('user_id', userId)
+    setIsConnected(false)
+    setStatus('idle')
+    setCode(null)
+  }
+
+  if (checkingInitial) return null
+
+  return (
+    <div className="mt-4 rounded-xl bg-white/5 border border-white/10 px-4 py-3.5">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium text-slate-200">Notifikasi Telegram</p>
+          <p className="text-slate-500 text-xs mt-0.5">Terima sinyal & alert langsung ke Telegram</p>
+        </div>
+        {isConnected && (
+          <span className="text-xs font-medium text-[#22C55E] shrink-0 ml-2">Terhubung ✓</span>
+        )}
+      </div>
+
+      {!isConnected && status === 'idle' && (
+        <button
+          onClick={handleGenerateCode}
+          className="w-full mt-3 rounded-lg py-2.5 text-sm font-medium text-white"
+          style={{ backgroundImage: 'linear-gradient(135deg, #3B82F6 0%, #8B5CF6 100%)' }}
+        >
+          Hubungkan Telegram
+        </button>
+      )}
+
+      {status === 'loading' && <p className="mt-3 text-xs text-slate-500">Membuat kode...</p>}
+
+      {status === 'has_code' && code && (
+        <div className="mt-3 space-y-2.5">
+          <div className="rounded-lg bg-black/30 py-2.5 text-center">
+            <p className="text-[10px] text-slate-500">Kode kamu (berlaku 15 menit)</p>
+            <p className="mt-0.5 text-xl font-bold tracking-widest text-white">{code}</p>
+          </div>
+          <ol className="list-decimal space-y-1 pl-4 text-xs text-slate-400">
+            <li>
+              Buka{' '}
+              <a
+                href={`https://t.me/${TELEGRAM_BOT_USERNAME}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#8B5CF6] underline"
+              >
+                @{TELEGRAM_BOT_USERNAME}
+              </a>{' '}
+              di Telegram, tap Start
+            </li>
+            <li>
+              Kirim: <code className="rounded bg-black/40 px-1 py-0.5">/link {code}</code>
+            </li>
+          </ol>
+          <p className="text-[10px] text-slate-500">Menunggu konfirmasi...</p>
+        </div>
+      )}
+
+      {status === 'connected' && <p className="mt-3 text-xs text-[#22C55E]">Berhasil terhubung! 🎉</p>}
+      {status === 'error' && <p className="mt-3 text-xs text-[#EF4444]">Gagal membuat kode, coba lagi.</p>}
+
+      {isConnected && (
+        <button
+          onClick={handleDisconnect}
+          className="w-full mt-3 rounded-lg border border-white/10 py-2 text-xs text-slate-400"
+        >
+          Putuskan Koneksi
+        </button>
+      )}
+    </div>
+  )
+}
+// ────────────────────────────────────────────────────────────────────────────
 
 export default function ProfilPage() {
   const router = useRouter()
@@ -267,6 +400,8 @@ export default function ProfilPage() {
           </div>
         </div>
 
+        <HubungkanTelegram userId={user.id} />
+
         <div className="mt-5 rounded-xl bg-white/5 border border-white/10 divide-y divide-white/5 overflow-hidden">
           <MenuLink label="Notifikasi" href="/notifikasi" />
           <MenuLink label="Riwayat Sinyal" href="/riwayat-sinyal" />
@@ -321,4 +456,4 @@ export default function ProfilPage() {
       </div>
     </main>
   )
-    }
+}
