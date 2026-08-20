@@ -20,8 +20,11 @@ type Stock = {
   } | null
 }
 
-// Map stock_id -> { direction, signal_tier }
-type SignalMap = Record<string, { direction: 'BUY' | 'SELL'; signal_tier: string }>
+// Map stock_id -> { direction, signal_tier }. Spec v5.0 5.2/5.4: WAJIB
+// tercover BUY/SELL/NETRAL untuk semua saham, bukan cuma yang lagi ada
+// signal aktif -- makanya sumbernya get_stock_status_map(), bukan lagi
+// get_active_signal_map() yang cuma nyakup saham dengan signal ACTIVE.
+type SignalMap = Record<string, { direction: 'BUY' | 'SELL' | 'NETRAL'; signal_tier: string }>
 
 type MarketCapFilter = 'ALL' | 'SMALL' | 'MID' | 'BIG'
 type VolumeFilter = 'ALL' | 'RENDAH' | 'SEDANG' | 'TINGGI'
@@ -61,17 +64,16 @@ function heatColor(pct: number | null) {
   return pct >= 0 ? `rgba(34,197,94,${alpha})` : `rgba(239,68,68,${alpha})`
 }
 
-// Badge BUY/SELL kecil
-function SignalBadge({ direction, tier }: { direction: 'BUY' | 'SELL'; tier: string }) {
-  const isBuy = direction === 'BUY'
+// Badge BUY/SELL/NETRAL kecil
+function SignalBadge({ direction, tier }: { direction: 'BUY' | 'SELL' | 'NETRAL'; tier: string }) {
+  const style =
+    direction === 'BUY'
+      ? 'bg-[#22C55E]/15 text-[#22C55E]'
+      : direction === 'SELL'
+        ? 'bg-[#EF4444]/15 text-[#EF4444]'
+        : 'bg-white/10 text-slate-400'
   return (
-    <span
-      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-        isBuy
-          ? 'bg-[#22C55E]/15 text-[#22C55E]'
-          : 'bg-[#EF4444]/15 text-[#EF4444]'
-      }`}
-    >
+    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${style}`}>
       {direction}
     </span>
   )
@@ -118,7 +120,7 @@ export default function ScreenerPage() {
           .eq('is_active', true)
           .order('ticker'),
         supabase.from('sectors').select('id, name').order('name'),
-        supabase.rpc('get_active_signal_map'),
+        supabase.rpc('get_stock_status_map'),
       ])
 
       if (!active) return
@@ -126,11 +128,16 @@ export default function ScreenerPage() {
       setStocks((stocksRes.data as unknown as Stock[]) ?? [])
       setSectors(sectorsRes.data ?? [])
 
-      // Build map stock_id -> { direction, signal_tier }
+      // Build map stock_id -> { direction, signal_tier }. Default ke tier
+      // 'daily' kalau satu saham punya status di kedua tier (daily & swing),
+      // karena tampilan default Screener adalah Daily.
       const map: SignalMap = {}
       if (signalsRes.data) {
-        for (const row of signalsRes.data as { stock_id: string; direction: 'BUY' | 'SELL'; signal_tier: string }[]) {
-          map[row.stock_id] = { direction: row.direction, signal_tier: row.signal_tier }
+        for (const row of signalsRes.data as { stock_id: string; status: 'BUY' | 'SELL' | 'NETRAL'; signal_tier: string }[]) {
+          const existing = map[row.stock_id]
+          if (!existing || row.signal_tier === 'daily') {
+            map[row.stock_id] = { direction: row.status, signal_tier: row.signal_tier }
+          }
         }
       }
       setSignalMap(map)
