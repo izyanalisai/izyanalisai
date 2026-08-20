@@ -241,7 +241,12 @@ async function classifyNews(
 // Fetch dari Berita Indo API (Lokal)
 async function fetchLocalSource(url: string, name: string) {
   try {
-    const res = await fetch(url, { headers: { 'Accept': 'application/json' } })
+    // FIX BUG #2: timeout 12 detik per source — sebelumnya tidak ada timeout,
+    // akibatnya DNS/HTTP hang 120 detik dan menyebabkan 55%+ job_runs ERROR.
+    const res = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(12000),
+    })
     if (!res.ok) return []
     const json = await res.json()
     const articles = json.data || json.articles || []
@@ -263,7 +268,10 @@ async function fetchLocalSource(url: string, name: string) {
 async function fetchGlobalSource(apiKey: string) {
   try {
     const url = GLOBAL_SOURCE.url(apiKey)
-    const res = await fetch(url, { headers: { 'Accept': 'application/json' } })
+    const res = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    })
     if (!res.ok) return []
     const json = await res.json()
     const articles = json.articles || []
