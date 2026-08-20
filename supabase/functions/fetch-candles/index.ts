@@ -3,6 +3,8 @@ const YAHOO_CHART_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const CONCURRENCY = 10;
 const BATCH_DELAY_MS = 300;
 const STALE_MS = 7 * 24 * 60 * 60 * 1000;
+// Spec v4.2 Section 3.3: H1/H4 dihapus total dari engine (data tidak reliable dari
+// Yahoo dan tidak tersedia gratis dari IDX). Hanya D1 (daily) dan W1 (swing bias) dipakai.
 const FULL_RANGE = {
   D1: {
     interval: '1d',
@@ -11,10 +13,6 @@ const FULL_RANGE = {
   W1: {
     interval: '1wk',
     range: '5y'
-  },
-  H1: {
-    interval: '60m',
-    range: '60d'
   }
 };
 const INCREMENTAL_RANGE = {
@@ -25,10 +23,6 @@ const INCREMENTAL_RANGE = {
   W1: {
     interval: '1wk',
     range: '6mo'
-  },
-  H1: {
-    interval: '60m',
-    range: '10d'
   }
 };
 async function fetchYahoo(ticker, timeframe, full) {
@@ -56,22 +50,6 @@ async function fetchYahoo(ticker, timeframe, full) {
   });
   return rows;
 }
-function aggregateToH4(h1) {
-  const out = [];
-  // Aggregate only complete 4-hour buckets in chronological order.
-  for(let i = 0; i + 3 < h1.length; i += 4){
-    const b = h1.slice(i, i + 4);
-    out.push({
-      ts: b[0].ts,
-      open: b[0].open,
-      high: Math.max(...b.map((c)=>c.high)),
-      low: Math.min(...b.map((c)=>c.low)),
-      close: b[3].close,
-      volume: b.reduce((s, c)=>s + (c.volume ?? 0), 0)
-    });
-  }
-  return out;
-}
 Deno.serve(async (req)=>{
   const supabase = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
   const url = new URL(req.url);
@@ -81,11 +59,9 @@ Deno.serve(async (req)=>{
   const forceFull = url.searchParams.get('full') === 'true';
   if (![
     'D1',
-    'W1',
-    'H1',
-    'H4'
+    'W1'
   ].includes(timeframe)) return new Response(JSON.stringify({
-    error: `timeframe tidak didukung: ${timeframe}`
+    error: `timeframe tidak didukung: ${timeframe} (H1/H4 sudah dihapus dari engine sesuai spec v4.2 Section 3.3, hanya D1/W1)`
   }), {
     status: 400
   });
@@ -100,36 +76,14 @@ Deno.serve(async (req)=>{
   for(let i = 0; i < stocks.length; i += CONCURRENCY){
     const batch = stocks.slice(i, i + CONCURRENCY);
     const results = await Promise.allSettled(batch.map(async (s)=>{
-      let candles;
-      if (timeframe === 'H4') {
-        const { data: latestH1 } = await supabase.from('candles').select('ts').eq('stock_id', s.id).eq('timeframe', 'H1').order('ts', {
-          ascending: false
-        }).limit(1).maybeSingle();
-        const fullH1 = forceFull || !latestH1?.ts || Date.now() - new Date(latestH1.ts).getTime() > STALE_MS;
-        const h1 = await fetchYahoo(s.ticker, 'H1', fullH1);
-        if (!h1.length) throw new Error('no H1 candle data from Yahoo');
-        const rows = h1.map((c)=>({
-            stock_id: s.id,
-            timeframe: 'H1',
-            ...c
-          }));
-        const { error: e } = await supabase.from('candles').upsert(rows, {
-          onConflict: 'stock_id,timeframe,ts'
-        });
-        if (e) throw e;
-        candles = aggregateToH4(h1);
-        incrementalCount += fullH1 ? 0 : 1;
-        fullCount += fullH1 ? 1 : 0;
-      } else {
-        const { data: latest } = await supabase.from('candles').select('ts').eq('stock_id', s.id).eq('timeframe', timeframe).order('ts', {
-          ascending: false
-        }).limit(1).maybeSingle();
-        const full = !forceFull && latest?.ts ? Date.now() - new Date(latest.ts).getTime() > STALE_MS : !latest?.ts;
-        candles = await fetchYahoo(s.ticker, timeframe, full);
-        if (!candles.length) throw new Error('no candle data from Yahoo');
-        incrementalCount += full ? 0 : 1;
-        fullCount += full ? 1 : 0;
-      }
+      const { data: latest } = await supabase.from('candles').select('ts').eq('stock_id', s.id).eq('timeframe', timeframe).order('ts', {
+        ascending: false
+      }).limit(1).maybeSingle();
+      const full = !forceFull && latest?.ts ? Date.now() - new Date(latest.ts).getTime() > STALE_MS : !latest?.ts;
+      const candles = await fetchYahoo(s.ticker, timeframe, full);
+      if (!candles.length) throw new Error('no candle data from Yahoo');
+      incrementalCount += full ? 0 : 1;
+      fullCount += full ? 1 : 0;
       return {
         stock: s,
         candles
