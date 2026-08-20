@@ -1,5 +1,10 @@
-const CACHE_NAME = 'izyanalisai-v1';
-const STATIC_ASSETS = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png'];
+// PENTING: naikkan angka ini SETIAP kali file sw.js ini diedit lagi.
+// Browser cuma cek update service worker kalau byte file sw.js berubah --
+// kalau isinya sama persis antar deploy, browser TIDAK PERNAH tau ada versi
+// baru dan bakal keukeuh pakai cache lama selamanya (ini akar masalah kenapa
+// fix yang udah di-deploy kadang "gak kelihatan" di HP user).
+const CACHE_NAME = 'izyanalisai-v2';
+const STATIC_ASSETS = ['/manifest.json', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -32,7 +37,29 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static asset (JS/CSS/font/icon): cache-first
+  // Halaman HTML (navigasi): network-first. Ini yang paling penting --
+  // kalau '/' atau '/saham/xxx' di-cache-first, user yang udah pernah buka
+  // app bakal nyangkut liat versi lama SELAMANYA walau kode baru sudah
+  // sukses ke-deploy, karena HTML lama itu masih nunjuk ke bundle JS lama.
+  if (request.mode === 'navigate' || request.destination === 'document') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request))
+    );
+    return;
+  }
+
+  // Next.js static chunk (di bawah /_next/static/) itu immutable -- nama
+  // filenya sudah mengandung content-hash, jadi kalau isinya berubah,
+  // namanya juga otomatis berubah. Aman & memang seharusnya cache-first.
+  // Asset lain (icon/manifest/font) juga cache-first seperti biasa.
   event.respondWith(
     caches.match(request).then((cached) => {
       return (
