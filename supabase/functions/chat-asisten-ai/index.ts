@@ -155,11 +155,22 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { status: 204, headers: CORS_HEADERS })
   }
   try {
-    const nineRouterKey = Deno.env.get('NINEROUTER_API_KEY')
-    const nineRouterBaseUrl = Deno.env.get('NINEROUTER_BASE_URL')
+    // FIX: baca 9Router dari internal_secrets (DB) — bukan env var yang tidak diset.
+    let nineRouterKey = Deno.env.get('NINEROUTER_API_KEY')
+    let nineRouterBaseUrl = Deno.env.get('NINEROUTER_BASE_URL')
     if (!nineRouterKey || !nineRouterBaseUrl) {
-      console.error('[chat-asisten-ai] NINEROUTER_API_KEY/NINEROUTER_BASE_URL belum di-set di Supabase Edge Function Secrets')
-      return new Response(JSON.stringify({ error: 'NINEROUTER_API_KEY/NINEROUTER_BASE_URL belum di-set di Supabase Secrets' }), { status: 500, headers: CORS_HEADERS })
+      const adminForSecrets = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+      const { data: nrRows } = await adminForSecrets
+        .from('internal_secrets')
+        .select('key,value')
+        .in('key', ['nineRouter_api_key', 'nineRouter_base_url'])
+      const nrMap = Object.fromEntries((nrRows ?? []).map((r: any) => [r.key, r.value]))
+      nineRouterKey = nineRouterKey || nrMap['nineRouter_api_key']
+      nineRouterBaseUrl = nineRouterBaseUrl || (nrMap['nineRouter_base_url'] ? nrMap['nineRouter_base_url'] + '/v1' : undefined)
+    }
+    if (!nineRouterKey || !nineRouterBaseUrl) {
+      console.error('[chat-asisten-ai] NINEROUTER_API_KEY/NINEROUTER_BASE_URL belum di-set (env atau internal_secrets)')
+      return new Response(JSON.stringify({ error: 'NINEROUTER_API_KEY/NINEROUTER_BASE_URL belum di-set' }), { status: 500, headers: CORS_HEADERS })
     }
 
     const authHeader = req.headers.get('Authorization')
