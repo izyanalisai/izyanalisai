@@ -103,12 +103,10 @@ Deno.serve(async (req)=>{
   const limit = Number(url.searchParams.get('limit') ?? '300');
   if (![
     'D1',
-    'W1',
-    'H1',
-    'H4'
+    'W1'
   ].includes(timeframe)) {
     return new Response(JSON.stringify({
-      error: `timeframe tidak didukung: ${timeframe}`
+      error: `timeframe tidak didukung: ${timeframe} (H1/H4 sudah dihapus dari engine sesuai spec v4.2 Section 3.3, hanya D1/W1)`
     }), {
       status: 400
     });
