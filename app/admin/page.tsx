@@ -32,12 +32,15 @@ type FeatureRequest = {
 
 type UserRow = {
   id: string
+  email: string
   full_name: string | null
   is_premium: boolean
   is_admin: boolean
   is_active: boolean
   created_at: string
-  subscriptions: { status: string; plan: string; period_end: string | null }[] | null
+  sub_status: string | null
+  sub_plan: string | null
+  sub_period_end: string | null
 }
 
 type JobRunRow = {
@@ -145,16 +148,10 @@ export default function AdminPage() {
     setLoadingList(false)
   }, [supabase])
 
-  // RLS profiles_select & subscriptions_select sudah mengizinkan admin baca
-  // semua baris (is_current_user_admin()), jadi query langsung aman dipakai.
   const loadUsers = useCallback(async () => {
     setLoadingList(true)
-    const { data } = await supabase
-      .from('profiles')
-      .select('id, full_name, is_premium, is_admin, is_active, created_at, subscriptions(status, plan, period_end)')
-      .order('created_at', { ascending: false })
-      .limit(100)
-    setUsers((data as unknown as UserRow[]) ?? [])
+    const { data } = await supabase.rpc('admin_list_users', { p_limit: 100 })
+    setUsers((data as UserRow[]) ?? [])
     setLoadingList(false)
   }, [supabase])
 
@@ -315,6 +312,38 @@ export default function AdminPage() {
     loadFeatureRequests()
   }
 
+  const grantPremium = async (userId: string) => {
+    const input = window.prompt('Berapa hari premium yang mau dikasih? (default 30)', '30')
+    if (input === null) return
+    const days = parseInt(input, 10)
+    if (!days || days <= 0) {
+      window.alert('Jumlah hari tidak valid.')
+      return
+    }
+    const { error } = await supabase.rpc('admin_grant_premium', {
+      p_user_id: userId,
+      p_days: days,
+    })
+    if (error) {
+      window.alert(`Gagal kasih premium: ${error.message}`)
+    } else {
+      window.alert(`Premium ${days} hari berhasil diberikan.`)
+      await loadUsers()
+    }
+  }
+
+  const revokePremium = async (userId: string) => {
+    if (!window.confirm('Yakin mau cabut premium user ini?')) return
+    const { error } = await supabase.rpc('admin_revoke_premium', {
+      p_user_id: userId,
+    })
+    if (error) {
+      window.alert(`Gagal cabut premium: ${error.message}`)
+    } else {
+      await loadUsers()
+    }
+  }
+
   if (checking) {
     return (
       <main className="min-h-screen bg-[#0F172A] text-white px-4 py-6 flex items-center justify-center">
@@ -445,11 +474,13 @@ export default function AdminPage() {
         <div className="space-y-2">
           {users.length === 0 && <p className="text-slate-500 text-sm">Belum ada user.</p>}
           {users.map((u) => {
-            const sub = u.subscriptions?.[0]
             return (
               <div key={u.id} className="rounded-xl bg-white/5 border border-white/10 px-4 py-3">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-slate-200">{u.full_name || '(tanpa nama)'}</p>
+                  <div>
+                    <p className="text-sm font-medium text-slate-200">{u.full_name || '(tanpa nama)'}</p>
+                    <p className="text-xs text-slate-500">{u.email}</p>
+                  </div>
                   <div className="flex gap-1.5">
                     {u.is_admin && <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#8B5CF6]/20 text-[#8B5CF6]">Admin</span>}
                     {u.is_premium && <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#F43F5E]/20 text-[#F43F5E]">Premium</span>}
@@ -458,9 +489,26 @@ export default function AdminPage() {
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
                   Daftar {new Date(u.created_at).toLocaleDateString('id-ID')}
-                  {sub && ` · Subscription: ${sub.plan} (${sub.status})`}
-                  {sub?.period_end && ` · berakhir ${new Date(sub.period_end).toLocaleDateString('id-ID')}`}
+                  {u.sub_plan && ` · Subscription: ${u.sub_plan} (${u.sub_status})`}
+                  {u.sub_period_end && ` · berakhir ${new Date(u.sub_period_end).toLocaleDateString('id-ID')}`}
                 </p>
+                <div className="flex gap-2 mt-2">
+                  {u.is_premium ? (
+                    <button
+                      onClick={() => revokePremium(u.id)}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-300"
+                    >
+                      Cabut Premium
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => grantPremium(u.id)}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-r from-[#3B82F6] to-[#8B5CF6] text-white"
+                    >
+                      Kasih Premium
+                    </button>
+                  )}
+                </div>
               </div>
             )
           })}
