@@ -124,10 +124,20 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
   }
 
-  const nineRouterKey = Deno.env.get('NINEROUTER_API_KEY')
-  const nineRouterBaseUrl = Deno.env.get('NINEROUTER_BASE_URL')
+  // FIX: baca 9Router dari internal_secrets (DB) — bukan env var yang tidak diset.
+  let nineRouterKey = Deno.env.get('NINEROUTER_API_KEY')
+  let nineRouterBaseUrl = Deno.env.get('NINEROUTER_BASE_URL')
   if (!nineRouterKey || !nineRouterBaseUrl) {
-    return new Response(JSON.stringify({ error: 'NINEROUTER_API_KEY/NINEROUTER_BASE_URL belum di-set di Supabase Secrets' }), { status: 500 })
+    const { data: nrRows } = await supabase
+      .from('internal_secrets')
+      .select('key,value')
+      .in('key', ['nineRouter_api_key', 'nineRouter_base_url'])
+    const nrMap = Object.fromEntries((nrRows ?? []).map((r: any) => [r.key, r.value]))
+    nineRouterKey = nineRouterKey || nrMap['nineRouter_api_key']
+    nineRouterBaseUrl = nineRouterBaseUrl || (nrMap['nineRouter_base_url'] ? nrMap['nineRouter_base_url'] + '/v1' : undefined)
+  }
+  if (!nineRouterKey || !nineRouterBaseUrl) {
+    return new Response(JSON.stringify({ error: 'NINEROUTER_API_KEY/NINEROUTER_BASE_URL belum di-set (env atau internal_secrets)' }), { status: 500 })
   }
 
   const url = new URL(req.url)
