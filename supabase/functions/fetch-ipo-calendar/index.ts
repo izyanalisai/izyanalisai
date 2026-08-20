@@ -55,15 +55,25 @@ function mapStatus(headerText) {
   if (t.includes('allotment')) return 'OPEN';
   return 'UPCOMING';
 }
+// FIX BUG #4: e-ipo.co.id return 403 tanpa Referer dan header browser lengkap.
+// Tambah Referer (seolah-olah datang dari dalam situs sendiri), Cache-Control,
+// dan Upgrade-Insecure-Requests supaya server tidak memblokir request.
 const BROWSER_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-  'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
+  'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+  'Referer': 'https://e-ipo.co.id/id/ipo/index',
+  'Cache-Control': 'no-cache',
+  'Upgrade-Insecure-Requests': '1',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'same-origin',
 };
 async function fetchPage(page) {
   const url = page <= 1 ? EIPO_BASE : `${EIPO_BASE}?page=${page}&per-page=12`;
   const res = await fetch(url, {
-    headers: BROWSER_HEADERS
+    headers: BROWSER_HEADERS,
+    signal: AbortSignal.timeout(20000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} on page ${page}`);
   const html = await res.text();
