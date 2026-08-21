@@ -147,7 +147,7 @@ export default function SignalPage() {
     return () => {
       active = false
     }
-  }, [])
+  }, [supabase])
 
   const filtered = useMemo(() => {
     let list = signals

@@ -166,14 +166,14 @@ export default function ScreenerPage() {
     return { p25: percentile(volumes, 0.25), p75: percentile(volumes, 0.75) }
   }, [stocks])
 
-  function volumeBucket(vol: number | null): VolumeFilter | null {
-    if (vol === null || vol === undefined) return null
-    if (vol < volumeQuartiles.p25) return 'RENDAH'
-    if (vol < volumeQuartiles.p75) return 'SEDANG'
-    return 'TINGGI'
-  }
-
   const commonFiltered = useMemo(() => {
+    function volumeBucket(vol: number | null): VolumeFilter | null {
+      if (vol === null || vol === undefined) return null
+      if (vol < volumeQuartiles.p25) return 'RENDAH'
+      if (vol < volumeQuartiles.p75) return 'SEDANG'
+      return 'TINGGI'
+    }
+
     let list = stocks
 
     if (query) {
@@ -197,7 +197,7 @@ export default function ScreenerPage() {
     }
 
     return list
-  }, [stocks, query, marketCapFilter, volumeFilter, volumeQuartiles, statusFilter, tierFilter, signalMap])
+  }, [stocks, query, marketCapFilter, volumeFilter, volumeQuartiles.p25, volumeQuartiles.p75, statusFilter, tierFilter, signalMap])
 
   const filtered = useMemo(() => {
     let list = commonFiltered

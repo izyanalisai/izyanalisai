@@ -267,6 +267,7 @@ export default function StockDetail({ ticker }: { ticker: string }) {
     return () => {
       active = false
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadSignal/loadWallet/signalTier sengaja tidak masuk deps: belum di-useCallback, resiko infinite loop; effect ini sengaja hanya re-run saat ticker berubah
   }, [ticker])
 
   // Reload sinyal saat user toggle Daily/Swing (dokumen 6.2: keduanya

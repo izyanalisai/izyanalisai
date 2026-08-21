@@ -145,7 +145,7 @@ export default function WatchlistPage() {
     return () => {
       active = false
     }
-  }, [user])
+  }, [user, supabase])
 
   const handleUnsaveSignal = async (id: string) => {
     setSavedSignals((prev) => prev.filter((s) => s.id !== id))
@@ -204,7 +204,7 @@ export default function WatchlistPage() {
     return () => {
       active = false
     }
-  }, [addQuery, addOpen])
+  }, [addQuery, addOpen, supabase])
 
   const existingStockIds = useMemo(() => new Set(items.map((i) => i.stock_id)), [items])
 

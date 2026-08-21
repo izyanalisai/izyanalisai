@@ -124,7 +124,7 @@ function HubungkanTelegram({ userId }: { userId: string }) {
     return () => {
       active = false
     }
-  }, [userId])
+  }, [userId, supabase])
 
   const handleGenerateCode = async () => {
     setStatus('loading')
@@ -278,7 +278,7 @@ export default function ProfilPage() {
     return () => {
       active = false
     }
-  }, [])
+  }, [router, supabase])
 
   const handleSaveName = async () => {
     if (!user || !nameInput.trim()) return
