@@ -43,7 +43,7 @@ const COMPARE_ROWS: [string, string, string][] = [
   ['Radar Sektor', '—', '✓'],
   ['Sector Rotation (detail)', 'Lihat diagram saja', 'Klik sektor untuk detail'],
   ['AI Task aktif', '3 (Price Alert + Daily Summary)', '20 (semua jenis)'],
-  ['Intelligence Network', '—', 'Notifikasi real-time'],
+  ['Intelligence Network', '—', 'Notifikasi instan saat ada sinyal/event'],
 ]
 
 function formatRupiah(n: number) {
