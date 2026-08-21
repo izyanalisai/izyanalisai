@@ -20,14 +20,19 @@ type Stock = {
   } | null
 }
 
-// Map stock_id -> { direction, signal_tier }. Spec v5.0 5.2/5.4: WAJIB
-// tercover BUY/SELL/NETRAL untuk semua saham, bukan cuma yang lagi ada
-// signal aktif -- makanya sumbernya get_stock_status_map(), bukan lagi
-// get_active_signal_map() yang cuma nyakup saham dengan signal ACTIVE.
-type SignalMap = Record<string, { direction: 'BUY' | 'SELL' | 'NETRAL'; signal_tier: string }>
+// Map stock_id -> status per tier. Spec v5.0 5.2/5.4: WAJIB tercover
+// BUY/SELL/NETRAL untuk semua saham, bukan cuma yang lagi ada signal aktif
+// -- makanya sumbernya get_stock_status_map(), bukan lagi get_active_signal_map()
+// yang cuma nyakup saham dengan signal ACTIVE. Disimpan per-tier (bukan cuma
+// satu direction) supaya filter Daily/Swing (spec 5.1) bisa baca status yang
+// tepat untuk tier yang dipilih.
+type Direction = 'BUY' | 'SELL' | 'NETRAL'
+type SignalMap = Record<string, { daily?: Direction; swing?: Direction }>
 
 type MarketCapFilter = 'ALL' | 'SMALL' | 'MID' | 'BIG'
 type VolumeFilter = 'ALL' | 'RENDAH' | 'SEDANG' | 'TINGGI'
+type StatusFilter = 'ALL' | Direction
+type TierFilter = 'daily' | 'swing'
 type ViewMode = 'HEATMAP' | 'LIST' | 'ROTATION'
 
 function formatHarga(n: number | null) {
@@ -65,7 +70,7 @@ function heatColor(pct: number | null) {
 }
 
 // Badge BUY/SELL/NETRAL kecil
-function SignalBadge({ direction, tier }: { direction: 'BUY' | 'SELL' | 'NETRAL'; tier: string }) {
+function SignalBadge({ direction }: { direction: Direction }) {
   const style =
     direction === 'BUY'
       ? 'bg-[#22C55E]/15 text-[#22C55E]'
@@ -90,6 +95,11 @@ export default function ScreenerPage() {
   const [activeSector, setActiveSector] = useState<string | null>(null)
   const [marketCapFilter, setMarketCapFilter] = useState<MarketCapFilter>('ALL')
   const [volumeFilter, setVolumeFilter] = useState<VolumeFilter>('ALL')
+  // Spec v5.0 5.1: Screener harus bisa filter BUY/SELL/NETRAL dan Daily/Swing.
+  // Default tier 'daily' sesuai tampilan default Screener yang sudah dipakai
+  // di logic lama (lihat komentar di bawah).
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL')
+  const [tierFilter, setTierFilter] = useState<TierFilter>('daily')
   const [view, setView] = useState<ViewMode>('HEATMAP')
   const [isPremium, setIsPremium] = useState(false)
 
@@ -128,16 +138,16 @@ export default function ScreenerPage() {
       setStocks((stocksRes.data as unknown as Stock[]) ?? [])
       setSectors(sectorsRes.data ?? [])
 
-      // Build map stock_id -> { direction, signal_tier }. Default ke tier
-      // 'daily' kalau satu saham punya status di kedua tier (daily & swing),
-      // karena tampilan default Screener adalah Daily.
+      // Build map stock_id -> { daily, swing }. Disimpan per-tier (bukan
+      // cuma satu direction terpilih) supaya filter Daily/Swing bisa baca
+      // status yang tepat untuk masing-masing tier.
       const map: SignalMap = {}
       if (signalsRes.data) {
-        for (const row of signalsRes.data as { stock_id: string; status: 'BUY' | 'SELL' | 'NETRAL'; signal_tier: string }[]) {
-          const existing = map[row.stock_id]
-          if (!existing || row.signal_tier === 'daily') {
-            map[row.stock_id] = { direction: row.status, signal_tier: row.signal_tier }
-          }
+        for (const row of signalsRes.data as { stock_id: string; status: Direction; signal_tier: string }[]) {
+          const existing = map[row.stock_id] ?? {}
+          if (row.signal_tier === 'daily') existing.daily = row.status
+          else if (row.signal_tier === 'swing') existing.swing = row.status
+          map[row.stock_id] = existing
         }
       }
       setSignalMap(map)
@@ -182,9 +192,12 @@ export default function ScreenerPage() {
         (s) => marketCapBucket(s.quotes?.market_cap ?? null) === marketCapFilter
       )
     }
+    if (statusFilter !== 'ALL') {
+      list = list.filter((s) => signalMap[s.id]?.[tierFilter] === statusFilter)
+    }
 
     return list
-  }, [stocks, query, marketCapFilter, volumeFilter, volumeQuartiles])
+  }, [stocks, query, marketCapFilter, volumeFilter, volumeQuartiles, statusFilter, tierFilter, signalMap])
 
   const filtered = useMemo(() => {
     let list = commonFiltered
@@ -207,7 +220,7 @@ export default function ScreenerPage() {
 
   const hasSectorData = sectors.length > 0
   const activeFilterCount =
-    (marketCapFilter !== 'ALL' ? 1 : 0) + (volumeFilter !== 'ALL' ? 1 : 0)
+    (marketCapFilter !== 'ALL' ? 1 : 0) + (volumeFilter !== 'ALL' ? 1 : 0) + (statusFilter !== 'ALL' ? 1 : 0)
 
   const pillActiveStyle = {
     backgroundImage:
@@ -255,6 +268,48 @@ export default function ScreenerPage() {
       </div>
 
       <div className="mt-4 space-y-2">
+        <div>
+          <p className="text-slate-500 text-[11px] mb-1.5">Timeframe</p>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {(
+              [
+                ['daily', 'Daily'],
+                ['swing', 'Swing'],
+              ] as [TierFilter, string][]
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setTierFilter(key)}
+                className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-medium border transition-colors duration-200"
+                style={tierFilter === key ? pillActiveStyle : pillInactiveStyle}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className="text-slate-500 text-[11px] mb-1.5">Status</p>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {(
+              [
+                ['ALL', 'Semua'],
+                ['BUY', 'BUY'],
+                ['SELL', 'SELL'],
+                ['NETRAL', 'NETRAL'],
+              ] as [StatusFilter, string][]
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setStatusFilter(key)}
+                className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-medium border transition-colors duration-200"
+                style={statusFilter === key ? pillActiveStyle : pillInactiveStyle}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         <div>
           <p className="text-slate-500 text-[11px] mb-1.5">Market Cap</p>
           <div className="flex gap-2 overflow-x-auto pb-1">
@@ -393,7 +448,7 @@ export default function ScreenerPage() {
             const prev = stock.quotes?.previous_close ?? null
             const pct = pctChange(price, prev)
             const up = pct !== null && pct >= 0
-            const signal = signalMap[stock.id]
+            const signalDirection = signalMap[stock.id]?.[tierFilter]
 
             return (
               <Link
@@ -404,8 +459,8 @@ export default function ScreenerPage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="font-semibold text-sm">{stock.ticker}</p>
-                    {signal && (
-                      <SignalBadge direction={signal.direction} tier={signal.signal_tier} />
+                    {signalDirection && (
+                      <SignalBadge direction={signalDirection} />
                     )}
                   </div>
                   <p className="text-slate-400 text-xs truncate">{stock.name}</p>
