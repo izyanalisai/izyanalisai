@@ -7,6 +7,7 @@ import * as cheerio from 'cheerio'
 // Supabase default, bikin TypeScript strict check gagal saat build ("never[]").
 // Solusi: paksa client di sini pakai generic <any> supaya lolos type-check,
 // tidak mempengaruhi bagian lain aplikasi.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
 
 // Worker fetch-ipo-calendar — DIPINDAH dari Supabase Edge Function ke Railway
@@ -128,6 +129,7 @@ async function logJobRun(supabase: AnyClient, status: string, detail: Record<str
 
 export async function POST(req: NextRequest) {
   const startedAt = new Date().toISOString()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const supabase: AnyClient = createClient<any>(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 
   const providedSecret = req.headers.get('x-worker-secret')

@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
 type SignalRow = {
@@ -93,6 +94,7 @@ function computeProgress(s: SignalRow): { pct: number; color: string } {
 
 export default function SignalPage() {
   const supabase = createClient()
+  const router = useRouter()
 
   const [signals, setSignals] = useState<SignalRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -181,7 +183,7 @@ export default function SignalPage() {
   // saham unik per hari. RPC ini yang menentukan angka, bukan client.
   async function handleUnlockToken(s: SignalRow) {
     if (!userId) {
-      window.location.href = '/login'
+      router.push('/login')
       return
     }
 

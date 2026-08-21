@@ -2,7 +2,7 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { getPostLoginPath } from '@/lib/auth-flow'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import PlexusBackground from '@/components/PlexusBackground'
 
 export default function LoginPage() {
@@ -11,14 +11,11 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
-  const [accountDeletedNotice, setAccountDeletedNotice] = useState(false)
-
-  useEffect(() => {
+  const [accountDeletedNotice] = useState(() => {
+    if (typeof window === 'undefined') return false
     const params = new URLSearchParams(window.location.search)
-    if (params.get('accountDeleted') === '1') {
-      setAccountDeletedNotice(true)
-    }
-  }, [])
+    return params.get('accountDeleted') === '1'
+  })
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()

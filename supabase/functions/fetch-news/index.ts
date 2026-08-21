@@ -822,7 +822,7 @@ const SYSTEM_PROMPT = 'Kamu adalah analis keuangan. Klasifikasikan berita saham 
 // ============================================
 // 2. HELPER FUNCTIONS
 // ============================================
-function normalizeTitle(title) {
+function _normalizeTitle(title) {
   return title.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 function findTickers(text) {

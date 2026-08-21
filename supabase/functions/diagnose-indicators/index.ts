@@ -98,7 +98,7 @@ function macd(closes) {
   const lineValsOnly = line.filter((v)=>v != null);
   const signalRaw = ema(lineValsOnly, 9);
   const signal = new Array(closes.length).fill(null);
-  let offset = line.findIndex((v)=>v != null);
+  const offset = line.findIndex((v)=>v != null);
   if (offset >= 0) {
     for(let i = 0; i < signalRaw.length; i++)signal[offset + i] = signalRaw[i];
   }
@@ -118,7 +118,7 @@ function stochastic(candles, period = 14, smoothK = 3) {
   const kVals = k.filter((v)=>v != null);
   const dRaw = ema(kVals, smoothK);
   const d = new Array(candles.length).fill(null);
-  let offset = k.findIndex((v)=>v != null);
+  const offset = k.findIndex((v)=>v != null);
   if (offset >= 0) {
     for(let i = 0; i < dRaw.length; i++)d[offset + i] = dRaw[i];
   }
@@ -188,7 +188,7 @@ function record(buckets, key, res) {
     b.grossLoss += Math.abs(res.pnl);
   } else b.timeouts++;
 }
-Deno.serve(async (req)=>{
+Deno.serve(async (_req)=>{
   const supabase = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
   const { data: stocks, error: stErr } = await supabase.from('stocks').select('id, ticker').in('ticker', LQ45_TICKERS);
   if (stErr || !stocks || stocks.length === 0) {

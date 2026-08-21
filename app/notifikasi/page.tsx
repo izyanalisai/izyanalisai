@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { useCallback, useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
 type Notif = {
@@ -28,6 +29,7 @@ function formatDay(dateStr: string) {
 
 export default function NotifikasiPage() {
   const supabase = createClient()
+  const router = useRouter()
   const [notifs, setNotifs] = useState<Notif[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -42,6 +44,7 @@ export default function NotifikasiPage() {
   }, [supabase])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch notifikasi async, bukan setState sinkron
     load()
   }, [load])
 
@@ -59,7 +62,7 @@ export default function NotifikasiPage() {
     if (n.reference_id) {
       const { data: stock } = await supabase.from('stocks').select('ticker').eq('id', n.reference_id).maybeSingle()
       if (stock) {
-        window.location.href = `/saham/${stock.ticker}`
+        router.push(`/saham/${stock.ticker}`)
         return
       }
     }

@@ -1,7 +1,6 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-
 // ---------- Theme (default ikut sistem, user bisa ganti manual dari Profil) ----------
 
 type ThemeChoice = 'system' | 'dark' | 'light'
@@ -22,15 +21,14 @@ function resolveTheme(choice: ThemeChoice): ResolvedTheme {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [choice, setChoiceState] = useState<ThemeChoice>('system')
-  const [resolved, setResolved] = useState<ResolvedTheme>('dark')
+function readStoredChoice(): ThemeChoice {
+  if (typeof window === 'undefined') return 'system'
+  return (localStorage.getItem(THEME_STORAGE_KEY) as ThemeChoice | null) ?? 'system'
+}
 
-  useEffect(() => {
-    const stored = (localStorage.getItem(THEME_STORAGE_KEY) as ThemeChoice | null) ?? 'system'
-    setChoiceState(stored)
-    setResolved(resolveTheme(stored))
-  }, [])
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [choice, setChoiceState] = useState<ThemeChoice>(() => readStoredChoice())
+  const [resolved, setResolved] = useState<ResolvedTheme>(() => resolveTheme(readStoredChoice()))
 
   useEffect(() => {
     const root = document.documentElement
@@ -124,13 +122,14 @@ type LangContextValue = {
 const LangContext = createContext<LangContextValue | null>(null)
 const LANG_STORAGE_KEY = 'izy_lang'
 
-export function LanguageProvider({ children }: { children: React.ReactNode }) {
-  const [lang, setLangState] = useState<Lang>('id')
+function readStoredLang(): Lang {
+  if (typeof window === 'undefined') return 'id'
+  const stored = localStorage.getItem(LANG_STORAGE_KEY) as Lang | null
+  return stored === 'id' || stored === 'en' ? stored : 'id'
+}
 
-  useEffect(() => {
-    const stored = localStorage.getItem(LANG_STORAGE_KEY) as Lang | null
-    if (stored === 'id' || stored === 'en') setLangState(stored)
-  }, [])
+export function LanguageProvider({ children }: { children: React.ReactNode }) {
+  const [lang, setLangState] = useState<Lang>(() => readStoredLang())
 
   const setLang = useCallback((next: Lang) => {
     localStorage.setItem(LANG_STORAGE_KEY, next)

@@ -86,6 +86,7 @@ export default function RiwayatSinyalPage() {
   }, [supabase, statusFilter, tierFilter, periodFilter])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch riwayat sinyal async, bukan setState sinkron
     load()
   }, [load])
 

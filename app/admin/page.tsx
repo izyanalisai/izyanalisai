@@ -287,12 +287,14 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!isAdmin) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch data admin async, bukan setState sinkron
     loadSummary()
     loadBugReports()
   }, [isAdmin, loadSummary, loadBugReports])
 
   useEffect(() => {
     if (!isAdmin) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch data sesuai tab aktif, bukan setState sinkron
     if (tab === 'bug') loadBugReports()
     else if (tab === 'feature') loadFeatureRequests()
     else if (tab === 'users') loadUsers()

@@ -57,6 +57,7 @@ export default function AiTaskPage() {
   }, [supabase])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch data async, bukan setState sinkron
     load()
   }, [load])
 

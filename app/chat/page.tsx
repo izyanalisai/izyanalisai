@@ -31,6 +31,7 @@ export default function ChatPage() {
   }, [supabase])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch saldo token async, bukan setState sinkron
     loadWallet()
   }, [loadWallet])
 

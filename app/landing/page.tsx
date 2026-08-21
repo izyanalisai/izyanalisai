@@ -14,6 +14,7 @@ export default function LandingPage() {
     if (!seen) {
       router.replace('/onboarding')
     } else {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sinkronisasi status onboarding dari localStorage
       setChecked(true)
     }
   }, [router])

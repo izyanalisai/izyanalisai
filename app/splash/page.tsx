@@ -16,6 +16,7 @@ export default function SplashPage() {
   const [visible, setVisible] = useState(false)
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- trigger animasi fade-in saat mount
     setVisible(true)
 
     const check = async () => {

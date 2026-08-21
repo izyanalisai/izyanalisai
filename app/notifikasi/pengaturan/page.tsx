@@ -90,6 +90,7 @@ function PushNotificationCard() {
   }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- cek status push notif async, bukan setState sinkron
     checkStatus()
   }, [checkStatus])
 
@@ -228,6 +229,7 @@ export default function PengaturanNotifikasiPage() {
   }, [supabase])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch preferensi notifikasi async, bukan setState sinkron
     load()
   }, [load])
 

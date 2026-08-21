@@ -272,9 +272,9 @@ export default function StockDetail({ ticker }: { ticker: string }) {
   // Reload sinyal saat user toggle Daily/Swing (dokumen 6.2: keduanya
   // berjalan independen, saham bisa punya sinyal di kedua tier sekaligus).
   useEffect(() => {
-    if (stock) {
-      loadSignal(stock.id, signalTier)
-    }
+    if (!stock) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch async ke Supabase saat ganti tier, bukan setState sinkron
+    loadSignal(stock.id, signalTier)
   }, [signalTier, stock, loadSignal])
 
   const handleUnlockToken = async () => {
@@ -773,7 +773,7 @@ export default function StockDetail({ ticker }: { ticker: string }) {
                 : 'Tambah ke Watchlist'}
           </button>
           <button
-            onClick={() => (window.location.href = '/trading-plan')}
+            onClick={() => router.push('/trading-plan')}
             className="flex-1 rounded-xl border border-white/10 px-4 py-3 text-sm font-medium text-slate-300"
           >
             Lihat Trading Plan

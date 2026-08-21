@@ -123,12 +123,14 @@ export default function WatchlistPage() {
 
   useEffect(() => {
     if (!activeFolderId) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch item watchlist async, bukan setState sinkron
     loadItems(activeFolderId)
   }, [activeFolderId, loadItems])
 
   useEffect(() => {
     if (!user) return
     let active = true
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- tandai loading sebelum fetch saved_signals async
     setSavedLoading(true)
     supabase
       .from('saved_signals')
@@ -184,6 +186,7 @@ export default function WatchlistPage() {
 
   useEffect(() => {
     if (!addOpen || addQuery.trim().length < 1) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset hasil pencarian saat query kosong
       setAddResults([])
       return
     }

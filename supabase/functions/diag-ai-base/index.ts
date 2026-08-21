@@ -1,4 +1,4 @@
-Deno.serve(async (req)=>{
+Deno.serve(async (_req)=>{
   const nineRouterKey = Deno.env.get('NINEROUTER_API_KEY') ?? null;
   const nineRouterBaseUrl = Deno.env.get('NINEROUTER_BASE_URL') ?? null;
   const report = {};

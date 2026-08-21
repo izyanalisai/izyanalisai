@@ -49,7 +49,7 @@ function findPivots(candles) {
     lows
   };
 }
-function buildZones(pivots, totalBars) {
+function buildZones(pivots, _totalBars) {
   if (pivots.length === 0) return [];
   const sorted = [
     ...pivots

@@ -72,6 +72,7 @@ export default function TradingPlanPage() {
   }, [supabase])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch trading plan async, bukan setState sinkron
     load()
   }, [load])
 

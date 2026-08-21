@@ -21,6 +21,7 @@ export default function DaftarPage() {
   const [cooldown, setCooldown] = useState(0)
   const [attempts, setAttempts] = useState(0)
   const [lockUntil, setLockUntil] = useState<number | null>(null)
+  const [now, setNow] = useState<number>(() => Date.now())
   const inputsRef = useRef<(HTMLInputElement | null)[]>([])
 
   useEffect(() => {
@@ -29,7 +30,13 @@ export default function DaftarPage() {
     return () => clearTimeout(t)
   }, [cooldown])
 
-  const locked = lockUntil !== null && Date.now() < lockUntil
+  useEffect(() => {
+    if (lockUntil === null) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [lockUntil])
+
+  const locked = lockUntil !== null && now < lockUntil
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()

@@ -9,7 +9,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 // (XHR/fetch) yang dilakukan halaman React/Nuxt IDX untuk memuat data tabel -- padahal
 // itu tujuan utama probe ini (mencari endpoint API JSON asli di balik halaman SPA).
 // Sekarang js_scenario dikirim lewat query string sesuai dokumentasi resmi.
-Deno.serve(async (req)=>{
+Deno.serve(async (_req)=>{
   const supabase = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
   const { data: secretRow } = await supabase.from('internal_secrets').select('value').eq('key', 'scrapingbee_api_key').maybeSingle();
   const apiKey = secretRow?.value;
