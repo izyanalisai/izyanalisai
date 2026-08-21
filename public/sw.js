@@ -3,7 +3,7 @@
 // kalau isinya sama persis antar deploy, browser TIDAK PERNAH tau ada versi
 // baru dan bakal keukeuh pakai cache lama selamanya (ini akar masalah kenapa
 // fix yang udah di-deploy kadang "gak kelihatan" di HP user).
-const CACHE_NAME = 'izyanalisai-v2';
+const CACHE_NAME = 'izyanalisai-' + new Date().toISOString().slice(0,10).replace(/-/g,'');
 const STATIC_ASSETS = ['/manifest.json', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (event) => {
