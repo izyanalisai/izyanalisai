@@ -1,0 +1,35 @@
+name: Daily Supabase Backup
+
+on:
+  schedule:
+    - cron: '0 19 * * *'  # 19:00 WIB
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install PostgreSQL Client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Backup Database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          DATE=$(date +%Y%m%d_%H%M%S)
+          pg_dump "$DATABASE_URL" \
+            --clean \
+            --if-exists \
+            --no-owner \
+            --no-privileges \
+            > "backup_${DATE}.sql"
+          ls -lh "backup_${DATE}.sql"
+
+      - name: Upload to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-${{ github.run_id }}
+          path: backup_*.sql
+          retention-days: 7
