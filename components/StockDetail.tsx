@@ -41,6 +41,11 @@ type SignalRpcResult = {
   tp1?: number | null
   tp2?: number | null
   stop_loss?: number | null
+  bearish_type?: string | null
+  bearish_trigger?: number | null
+  invalidation?: number | null
+  downside_support_1?: number | null
+  downside_support_2?: number | null
   ai_reasoning?: { teknikal?: string; fundamental?: string; makro?: string } | null
 }
 
@@ -588,53 +593,84 @@ export default function StockDetail({ ticker }: { ticker: string }) {
 
           {signal && (
             <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                {locked ? (
-                  <>
-                    <LockedField label="Buy Area" />
-                    <LockedField label="Stop Loss" />
-                    <LockedField label="Target 1 (TP1)" />
-                    <LockedField label="Target 2 (TP2)" />
-                  </>
-                ) : (
-                  <>
+              {signal.direction === 'SELL' && (
+                <p className="text-[11px] text-amber-400">
+                  SELL / Bearish Alert — bukan instruksi short-selling. DYOR.
+                </p>
+              )}
+
+              {signal.direction === 'BUY' ? (
+                <>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
                     <div className="rounded-lg bg-white/5 px-3 py-2">
                       <p className="text-slate-500 text-xs">Buy Area</p>
                       <p className="font-medium">
                         {formatHarga(signal.buy_area_low)} - {formatHarga(signal.buy_area_high)}
                       </p>
                     </div>
-                    <div className="rounded-lg bg-white/5 px-3 py-2">
-                      <p className="text-slate-500 text-xs">Stop Loss</p>
-                      <p className="font-medium text-[#EF4444]">{formatHarga(signal.stop_loss)}</p>
-                    </div>
-                    <div className="rounded-lg bg-white/5 px-3 py-2">
-                      <p className="text-slate-500 text-xs">Target 1 (TP1)</p>
-                      <p className="font-medium text-[#22C55E]">{formatHarga(signal.tp1)}</p>
-                    </div>
-                    <div className="rounded-lg bg-white/5 px-3 py-2">
-                      <p className="text-slate-500 text-xs">Target 2 (TP2)</p>
-                      <p className="font-medium text-[#22C55E]">{formatHarga(signal.tp2)}</p>
-                    </div>
-                  </>
-                )}
-              </div>
+                    {locked ? (
+                      <>
+                        <LockedField label="Stop Loss" />
+                        <LockedField label="Target 1 (TP1)" />
+                        <LockedField label="Target 2 (TP2)" />
+                      </>
+                    ) : (
+                      <>
+                        <div className="rounded-lg bg-white/5 px-3 py-2">
+                          <p className="text-slate-500 text-xs">Stop Loss</p>
+                          <p className="font-medium text-[#EF4444]">{formatHarga(signal.stop_loss)}</p>
+                        </div>
+                        <div className="rounded-lg bg-white/5 px-3 py-2">
+                          <p className="text-slate-500 text-xs">Target 1 (TP1)</p>
+                          <p className="font-medium text-[#22C55E]">{formatHarga(signal.tp1)}</p>
+                        </div>
+                        <div className="rounded-lg bg-white/5 px-3 py-2">
+                          <p className="text-slate-500 text-xs">Target 2 (TP2)</p>
+                          <p className="font-medium text-[#22C55E]">{formatHarga(signal.tp2)}</p>
+                        </div>
+                      </>
+                    )}
+                  </div>
 
-              {locked ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <LockedField label="Support" />
-                  <LockedField label="Resistance" />
-                </div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="rounded-lg bg-white/5 px-3 py-2">
+                      <p className="text-slate-500 text-xs">Support</p>
+                      <p className="font-medium">{formatHarga(signal.support_level)}</p>
+                    </div>
+                    <div className="rounded-lg bg-white/5 px-3 py-2">
+                      <p className="text-slate-500 text-xs">Resistance</p>
+                      <p className="font-medium">{formatHarga(signal.resistance_level)}</p>
+                    </div>
+                  </div>
+                </>
               ) : (
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div className="rounded-lg bg-white/5 px-3 py-2">
-                    <p className="text-slate-500 text-xs">Support</p>
-                    <p className="font-medium">{formatHarga(signal.support_level)}</p>
+                    <p className="text-slate-500 text-xs">Downside Support</p>
+                    <p className="font-medium">{formatHarga(signal.downside_support_1)}</p>
                   </div>
-                  <div className="rounded-lg bg-white/5 px-3 py-2">
-                    <p className="text-slate-500 text-xs">Resistance</p>
-                    <p className="font-medium">{formatHarga(signal.resistance_level)}</p>
-                  </div>
+                  {locked ? (
+                    <>
+                      <LockedField label="Bearish Trigger" />
+                      <LockedField label="Invalidation" />
+                      <LockedField label="Downside Support 2" />
+                    </>
+                  ) : (
+                    <>
+                      <div className="rounded-lg bg-white/5 px-3 py-2">
+                        <p className="text-slate-500 text-xs">Bearish Trigger</p>
+                        <p className="font-medium text-[#EF4444]">{formatHarga(signal.bearish_trigger)}</p>
+                      </div>
+                      <div className="rounded-lg bg-white/5 px-3 py-2">
+                        <p className="text-slate-500 text-xs">Invalidation</p>
+                        <p className="font-medium">{formatHarga(signal.invalidation)}</p>
+                      </div>
+                      <div className="rounded-lg bg-white/5 px-3 py-2">
+                        <p className="text-slate-500 text-xs">Downside Support 2</p>
+                        <p className="font-medium text-[#22C55E]">{formatHarga(signal.downside_support_2)}</p>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
