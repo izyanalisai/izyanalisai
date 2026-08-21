@@ -17,9 +17,15 @@ type HistoryItem = {
   result: 'WIN' | 'LOSS' | 'BREAKEVEN' | 'INVALID' | null
   unlocked: boolean
   entry_price: number | null
+  buy_area_low: number | null
+  buy_area_high: number | null
   tp1: number | null
   tp2: number | null
   stop_loss: number | null
+  bearish_trigger: number | null
+  invalidation: number | null
+  downside_support_1: number | null
+  downside_support_2: number | null
 }
 
 // Catatan: result (WIN/LOSS/dst) di sini murni status akhir sinyal
@@ -167,18 +173,37 @@ export default function RiwayatSinyalPage() {
 
             {it.unlocked ? (
               <div className="grid grid-cols-3 gap-2 mt-2 text-[11px]">
-                <div>
-                  <p className="text-slate-500">Entry</p>
-                  <p>{fmt(it.entry_price)}</p>
-                </div>
-                <div>
-                  <p className="text-slate-500">TP1/TP2</p>
-                  <p>{fmt(it.tp1)} / {fmt(it.tp2)}</p>
-                </div>
-                <div>
-                  <p className="text-slate-500">SL</p>
-                  <p>{fmt(it.stop_loss)}</p>
-                </div>
+                {it.direction === 'BUY' ? (
+                  <>
+                    <div>
+                      <p className="text-slate-500">Entry</p>
+                      <p>{fmt(it.entry_price)}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">TP1/TP2</p>
+                      <p>{fmt(it.tp1)} / {fmt(it.tp2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">SL</p>
+                      <p>{fmt(it.stop_loss)}</p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <p className="text-slate-500">Trigger</p>
+                      <p>{fmt(it.bearish_trigger)}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Support 1/2</p>
+                      <p>{fmt(it.downside_support_1)} / {fmt(it.downside_support_2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Invalidation</p>
+                      <p>{fmt(it.invalidation)}</p>
+                    </div>
+                  </>
+                )}
               </div>
             ) : (
               <p className="text-[11px] text-slate-600 mt-2">
