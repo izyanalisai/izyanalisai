@@ -9,6 +9,7 @@ import { NO_SHELL_PREFIXES } from './BottomNav'
 export default function Header() {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
+  const [tokenBalance, setTokenBalance] = useState<number | null>(null)
   const router = useRouter()
   const pathname = usePathname()
   const [supabase] = useState(() => createClient())
@@ -28,6 +29,25 @@ export default function Header() {
     }
   }, [supabase])
 
+  useEffect(() => {
+    if (!user) {
+      setTokenBalance(null)
+      return
+    }
+    let cancelled = false
+    supabase
+      .from('token_wallets')
+      .select('balance')
+      .eq('user_id', user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setTokenBalance(data?.balance ?? 0)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [supabase, user])
+
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
@@ -39,13 +59,23 @@ export default function Header() {
   }
 
   return (
-    <header className="sticky top-0 z-30 lg:hidden bg-[#0F172A]/95 backdrop-blur">
-      <div className="flex items-center justify-between px-4 py-3 max-w-[480px] mx-auto">
+    <header className="sticky top-0 z-30 bg-[#0F172A]/95 backdrop-blur lg:pl-60">
+      <div className="flex items-center justify-between px-4 py-3 max-w-[480px] mx-auto lg:max-w-none lg:px-6">
         <span className="font-bold text-sm text-white">IzyAnalisAi</span>
         {!loading &&
           (user ? (
             <div className="flex items-center gap-3">
-              <span className="text-slate-400 text-xs truncate max-w-[140px]">
+              {tokenBalance !== null && (
+                <a
+                  href="/profil"
+                  className="flex items-center gap-1 text-xs font-medium text-white rounded-full px-2.5 py-1 border border-white/10 bg-white/5 hover:border-[#8B5CF6] transition-colors duration-200"
+                  title="Saldo token"
+                >
+                  <span aria-hidden="true">🪙</span>
+                  <span>{tokenBalance}</span>
+                </a>
+              )}
+              <span className="text-slate-400 text-xs truncate max-w-[100px]">
                 {user.email}
               </span>
               <button

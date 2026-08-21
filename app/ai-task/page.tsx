@@ -2,6 +2,8 @@
 
 import { createClient } from '@/lib/supabase/client'
 import { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
+import ChartUploadModal from '@/components/ChartUploadModal'
 
 type TaskType = 'PRICE_ALERT' | 'LEVEL_RETEST' | 'DAILY_SUMMARY' | 'UNUSUAL_VOLUME'
 type TaskStatus = 'ACTIVE' | 'PAUSED' | 'DONE' | 'FAILED'
@@ -37,6 +39,7 @@ export default function AiTaskPage() {
   const [level, setLevel] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [showChartModal, setShowChartModal] = useState(false)
 
   const load = useCallback(async () => {
     const { data: userRes } = await supabase.auth.getUser()
@@ -136,11 +139,34 @@ export default function AiTaskPage() {
     <main className="min-h-screen bg-[#0F172A] text-white px-4 py-6 pb-28 max-w-[480px] mx-auto lg:max-w-2xl lg:pl-64">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-xl font-bold">AI Task</h1>
+      </div>
+      <p className="text-slate-400 text-sm mb-4">Tanya AI, upload chart, atau buat tugas otomatis.</p>
+
+      <div className="grid grid-cols-2 gap-3 mb-6">
+        <Link
+          href="/chat"
+          className="rounded-xl border border-white/10 bg-white/5 p-4 flex flex-col items-start gap-2 hover:border-[#8B5CF6] transition-colors duration-200"
+        >
+          <span className="text-2xl" aria-hidden="true">💬</span>
+          <span className="text-sm font-medium text-white">Tanya AI</span>
+          <span className="text-xs text-slate-400">Chat soal IHSG, saham, atau sinyal</span>
+        </Link>
+        <button
+          onClick={() => setShowChartModal(true)}
+          className="rounded-xl border border-white/10 bg-white/5 p-4 flex flex-col items-start gap-2 hover:border-[#8B5CF6] transition-colors duration-200 text-left"
+        >
+          <span className="text-2xl" aria-hidden="true">📈</span>
+          <span className="text-sm font-medium text-white">Upload Chart</span>
+          <span className="text-xs text-slate-400">Analisa gambar chart pakai AI Vision</span>
+        </button>
+      </div>
+
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-sm font-semibold text-slate-300">Tugas Otomatis</h2>
         <span className="text-xs text-slate-400">
           {activeCount}/{maxTasks} aktif
         </span>
       </div>
-      <p className="text-slate-400 text-sm mb-4">Tugas otomatis pantau saham.</p>
 
       <button
         onClick={() => setShowForm((v) => !v)}
@@ -271,6 +297,8 @@ export default function AiTaskPage() {
           </div>
         ))}
       </div>
+
+      <ChartUploadModal open={showChartModal} onClose={() => setShowChartModal(false)} />
     </main>
   )
 }
