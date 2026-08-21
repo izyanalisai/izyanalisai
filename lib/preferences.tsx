@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 
-// ---------- Theme (dokumen 3.1 & 8.1: default ikut sistem, user bisa ganti manual dari Profil) ----------
+// ---------- Theme (default ikut sistem, user bisa ganti manual dari Profil) ----------
 
 type ThemeChoice = 'system' | 'dark' | 'light'
 type ResolvedTheme = 'dark' | 'light'
@@ -64,7 +64,7 @@ export function useTheme() {
   return ctx
 }
 
-// ---------- Language (dokumen 8.1: toggle Indonesia/English, hanya label UI & teks statis) ----------
+// ---------- Language (toggle Indonesia/English) ----------
 
 export type Lang = 'id' | 'en'
 
