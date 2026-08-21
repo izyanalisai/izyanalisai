@@ -6,7 +6,7 @@ import PlexusBackground from '@/components/PlexusBackground'
 
 const SLIDES = [
   { title: 'Sinyal AI Cerdas', desc: 'Entry, target, dan stop loss yang jelas untuk setiap saham IDX.' },
-  { title: 'Sector Rotation & Smart Money', desc: 'Pantau ke mana dana bergerak antar sektor secara real-time.' },
+  { title: 'Sector Rotation & Smart Money', desc: 'Pantau ke mana dana bergerak antar sektor dari data penutupan terbaru.' },
   { title: 'Analis Pasar IDX di Genggaman Anda', desc: 'Tanya apa saja soal saham, lengkap dengan analisa chart AI.' },
 ]
 

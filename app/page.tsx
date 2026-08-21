@@ -116,6 +116,7 @@ export default function Home() {
   const [ihsg, setIhsg] = useState<{ value: number | null; previous_close: number | null; quality: string | null } | null>(null)
   const [stocks, setStocks] = useState<StockRow[]>([])
   const [signals, setSignals] = useState<SignalRow[]>([])
+  const [signalsAreStale, setSignalsAreStale] = useState(false)
   const [econEvents, setEconEvents] = useState<EconEvent[]>([])
   const [news, setNews] = useState<NewsItem[]>([])
   const [aiInput, setAiInput] = useState('')
@@ -168,7 +169,7 @@ export default function Home() {
         setTokenBalance(wallet?.balance ?? null)
       }
 
-      const [{ data: idx }, { data: stockData }, { data: signalData }, { data: econData }, { data: newsData }] =
+      const [{ data: idx }, { data: stockData }, { data: activeSignalData }, { data: econData }, { data: newsData }] =
         await Promise.all([
           supabase.from('market_index').select('value, previous_close, quality').eq('ticker', '^JKSE').maybeSingle(),
           supabase
@@ -190,6 +191,25 @@ export default function Home() {
             .limit(3),
           supabase.from('news').select('id, title, sentiment, published_at').order('published_at', { ascending: false }).limit(3),
         ])
+
+      // FIX (21 Agustus 2026, spec v5.0 section 4.4): "Tidak boleh membuat Home
+      // kosong." Jam 15.30-19.00 WIB semua signal kemarin sudah EXPIRED dan
+      // signal baru belum digenerate, jadi query ACTIVE di atas sering kosong.
+      // Kalau kosong, fallback ke signal terakhir apapun statusnya (ditandai
+      // isStaleFallback supaya UI kasih label tanggal, sesuai larangan
+      // menyamarkan data lama sebagai data hari ini).
+      let signalData = activeSignalData
+      let isStaleFallback = false
+      if (!activeSignalData || activeSignalData.length === 0) {
+        const { data: fallbackSignals } = await supabase
+          .from('signals_public')
+          .select('id, direction, signal_tier, timeframe, created_at, stock_id')
+          .order('created_at', { ascending: false })
+          .limit(3)
+        signalData = fallbackSignals
+        isStaleFallback = (fallbackSignals?.length ?? 0) > 0
+      }
+      setSignalsAreStale(isStaleFallback)
 
       const stockList = (stockData as unknown as StockRow[]) ?? []
       const stockById = new Map(stockList.map((s) => [s.id, s]))
@@ -386,11 +406,23 @@ export default function Home() {
           </Link>
         </div>
         {signals.length === 0 && !loading && (
-          <p className="text-xs text-slate-500">Belum ada sinyal aktif.</p>
+          <p className="text-xs text-slate-500">
+            Belum ada riwayat sinyal untuk ditampilkan.
+          </p>
+        )}
+        {/* Spec v5.0 4.4/4.5: kalau ini fallback ke data lama (bukan signal
+            ACTIVE hari ini), wajib dikasih label tanggal jelas -- jangan
+            disamarkan seolah signal hari ini. */}
+        {signalsAreStale && signals.length > 0 && !loading && (
+          <p className="text-[11px] text-amber-400 mb-2">
+            Belum ada sinyal baru hari ini — menampilkan sinyal terakhir yang tersedia.
+          </p>
         )}
         <div className="space-y-2">
           {signals.map((s) => {
             const style = directionStyle[s.direction] ?? directionStyle.SELL
+            const signalDate = new Date(s.created_at)
+            const isToday = signalDate.toDateString() === new Date().toDateString()
             return (
               <Link
                 key={s.id}
@@ -399,7 +431,15 @@ export default function Home() {
               >
                 <div>
                   <p className="text-sm font-semibold">{s.stocks?.ticker}</p>
-                  <p className="text-[11px] text-slate-500">{s.stocks?.name}</p>
+                  <p className="text-[11px] text-slate-500">
+                    {s.stocks?.name}
+                    {!isToday && (
+                      <span className="text-slate-600">
+                        {' · '}
+                        {signalDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
+                      </span>
+                    )}
+                  </p>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] font-medium px-2 py-1 rounded-full border border-white/10 text-slate-300">

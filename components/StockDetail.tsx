@@ -21,6 +21,7 @@ type Quote = {
   volume: number | null
   quality: string | null
   updated_at: string | null
+  market_time: string | null
 }
 
 type SignalTier = 'daily' | 'swing'
@@ -120,6 +121,20 @@ function pctChange(price: number | null, prev: number | null) {
   return ((price - prev) / prev) * 100
 }
 
+// Spec v5.0 section 4.5 & 6.1: semua harga wajib berlabel jelas sebagai data EOD,
+// tidak boleh terkesan "Real-time"/"Live"/"Terkini" karena sumber data primer adalah
+// IDX End-of-Day (fallback Yahoo Finance D1/W1), bukan feed langsung.
+function formatLabelHargaEod(marketTime: string | null) {
+  if (!marketTime) return 'Harga Penutupan IDX'
+  const tanggal = new Date(marketTime).toLocaleDateString('id-ID', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'Asia/Jakarta',
+  })
+  return `Harga Penutupan IDX — ${tanggal}`
+}
+
 function isStale(fetchedAt: string | null) {
   if (!fetchedAt) return true
   const diffMinutes = (Date.now() - new Date(fetchedAt).getTime()) / 60000
@@ -198,7 +213,7 @@ export default function StockDetail({ ticker }: { ticker: string }) {
 
       const { data: quoteData } = await supabase
         .from('quotes')
-        .select('price, previous_close, day_high, day_low, volume, quality, updated_at')
+        .select('price, previous_close, day_high, day_low, volume, quality, updated_at, market_time')
         .eq('stock_id', stockData.id)
         .maybeSingle()
 
@@ -408,6 +423,9 @@ export default function StockDetail({ ticker }: { ticker: string }) {
       <div className="px-4 py-4 max-w-[480px] mx-auto space-y-4">
         {quote?.price != null ? (
           <div className="rounded-xl bg-white/5 border border-white/10 px-4 py-5">
+            <p className="text-slate-500 text-[11px] font-medium tracking-wide mb-2">
+              {formatLabelHargaEod(quote.market_time)}
+            </p>
             <div className="flex items-end justify-between">
               <div>
                 <p className="text-2xl font-bold">{formatHarga(quote.price)}</p>
