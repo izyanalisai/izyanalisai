@@ -22,6 +22,11 @@ type SignalRow = {
   tp1: number | null
   tp2: number | null
   stop_loss: number | null
+  bearish_type: string | null
+  bearish_trigger: number | null
+  invalidation: number | null
+  downside_support_1: number | null
+  downside_support_2: number | null
   current_price: number | null
   unlocked: boolean
   // FIX (21 Agustus 2026): RPC list_active_signals sudah mengembalikan
@@ -66,11 +71,14 @@ function computeProgress(s: SignalRow): { pct: number; color: string } {
   if (s.status === 'HIT_TP1') return { pct: 100, color: '#22C55E' }
 
   const { entry_price, tp1, stop_loss, current_price, direction } = s
-  if (entry_price == null || tp1 == null || stop_loss == null || current_price == null) {
+  if (current_price == null) {
     return { pct: 0, color: '#64748B' }
   }
 
   if (direction === 'BUY') {
+    if (entry_price == null || tp1 == null || stop_loss == null) {
+      return { pct: 0, color: '#64748B' }
+    }
     if (current_price <= stop_loss) return { pct: 100, color: '#EF4444' }
     if (current_price >= tp1) return { pct: 100, color: '#22C55E' }
     if (current_price >= entry_price) {
@@ -81,14 +89,19 @@ function computeProgress(s: SignalRow): { pct: number; color: string } {
     return { pct: Math.max(0, Math.min(100, pct)), color: '#EF4444' }
   }
 
-  // SELL: arah kebalikan
-  if (current_price >= stop_loss) return { pct: 100, color: '#EF4444' }
-  if (current_price <= tp1) return { pct: 100, color: '#22C55E' }
-  if (current_price <= entry_price) {
-    const pct = ((entry_price - current_price) / (entry_price - tp1)) * 100
+  // SELL: RPC tidak pernah mengisi entry_price/tp1/stop_loss untuk arah SELL --
+  // pakai field bearish_trigger/invalidation/downside_support_1 sebagai gantinya.
+  const { bearish_trigger, invalidation, downside_support_1 } = s
+  if (bearish_trigger == null || invalidation == null || downside_support_1 == null) {
+    return { pct: 0, color: '#64748B' }
+  }
+  if (current_price >= invalidation) return { pct: 100, color: '#EF4444' }
+  if (current_price <= downside_support_1) return { pct: 100, color: '#22C55E' }
+  if (current_price <= bearish_trigger) {
+    const pct = ((bearish_trigger - current_price) / (bearish_trigger - downside_support_1)) * 100
     return { pct: Math.max(0, Math.min(100, pct)), color: '#22C55E' }
   }
-  const pct = ((current_price - entry_price) / (stop_loss - entry_price)) * 100
+  const pct = ((current_price - bearish_trigger) / (invalidation - bearish_trigger)) * 100
   return { pct: Math.max(0, Math.min(100, pct)), color: '#EF4444' }
 }
 
@@ -229,6 +242,10 @@ export default function SignalPage() {
       s.tp1 != null ? `TP1: ${formatHarga(s.tp1)}` : null,
       s.tp2 != null ? `TP2: ${formatHarga(s.tp2)}` : null,
       s.stop_loss != null ? `Stop Loss: ${formatHarga(s.stop_loss)}` : null,
+      s.bearish_trigger != null ? `Bearish Trigger: ${formatHarga(s.bearish_trigger)}` : null,
+      s.invalidation != null ? `Invalidation: ${formatHarga(s.invalidation)}` : null,
+      s.downside_support_1 != null ? `Downside Support 1: ${formatHarga(s.downside_support_1)}` : null,
+      s.downside_support_2 != null ? `Downside Support 2: ${formatHarga(s.downside_support_2)}` : null,
       s.support_level != null ? `Support: ${formatHarga(s.support_level)}` : null,
       s.resistance_level != null ? `Resistance: ${formatHarga(s.resistance_level)}` : null,
       'DYOR - bukan jaminan profit.',
@@ -347,26 +364,43 @@ export default function SignalPage() {
 
                   {s.unlocked ? (
                     <div className="mt-2 space-y-1 text-xs">
-                      {s.buy_area_low != null && s.buy_area_high != null && (
-                        <p className="text-slate-300">
-                          Buy Area: <span className="font-medium">{formatHarga(s.buy_area_low)} - {formatHarga(s.buy_area_high)}</span>
-                        </p>
-                      )}
-                      <div className="flex gap-3 text-slate-300">
-                        {s.tp1 != null && <span>TP1: <span className="text-[#22C55E] font-medium">{formatHarga(s.tp1)}</span></span>}
-                        {s.tp2 != null && <span>TP2: <span className="text-[#22C55E] font-medium">{formatHarga(s.tp2)}</span></span>}
-                        {s.stop_loss != null && <span>SL: <span className="text-[#EF4444] font-medium">{formatHarga(s.stop_loss)}</span></span>}
-                      </div>
-                      {(s.support_level != null || s.resistance_level != null) && (
-                        <div className="flex gap-3 text-slate-500">
-                          {s.support_level != null && <span>Support: {formatHarga(s.support_level)}</span>}
-                          {s.resistance_level != null && <span>Resistance: {formatHarga(s.resistance_level)}</span>}
-                        </div>
+                      {s.direction === 'BUY' ? (
+                        <>
+                          {s.buy_area_low != null && s.buy_area_high != null && (
+                            <p className="text-slate-300">
+                              Buy Area: <span className="font-medium">{formatHarga(s.buy_area_low)} - {formatHarga(s.buy_area_high)}</span>
+                            </p>
+                          )}
+                          <div className="flex gap-3 text-slate-300">
+                            {s.tp1 != null && <span>TP1: <span className="text-[#22C55E] font-medium">{formatHarga(s.tp1)}</span></span>}
+                            {s.tp2 != null && <span>TP2: <span className="text-[#22C55E] font-medium">{formatHarga(s.tp2)}</span></span>}
+                            {s.stop_loss != null && <span>SL: <span className="text-[#EF4444] font-medium">{formatHarga(s.stop_loss)}</span></span>}
+                          </div>
+                          {(s.support_level != null || s.resistance_level != null) && (
+                            <div className="flex gap-3 text-slate-500">
+                              {s.support_level != null && <span>Support: {formatHarga(s.support_level)}</span>}
+                              {s.resistance_level != null && <span>Resistance: {formatHarga(s.resistance_level)}</span>}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {s.downside_support_1 != null && (
+                            <p className="text-slate-300">
+                              Downside Support: <span className="font-medium">{formatHarga(s.downside_support_1)}</span>
+                            </p>
+                          )}
+                          <div className="flex gap-3 text-slate-300">
+                            {s.bearish_trigger != null && <span>Trigger: <span className="text-[#EF4444] font-medium">{formatHarga(s.bearish_trigger)}</span></span>}
+                            {s.invalidation != null && <span>Invalidation: <span className="font-medium">{formatHarga(s.invalidation)}</span></span>}
+                            {s.downside_support_2 != null && <span>Support 2: <span className="text-[#22C55E] font-medium">{formatHarga(s.downside_support_2)}</span></span>}
+                          </div>
+                        </>
                       )}
                     </div>
                   ) : (
                     <p className="text-slate-500 text-xs mt-2">
-                      Buy Area, TP, SL, Support & Resistance terkunci
+                      {s.direction === 'BUY' ? 'Buy Area, TP, SL, Support & Resistance terkunci' : 'Trigger, Invalidation & Support terkunci'}
                     </p>
                   )}
                 </Link>
