@@ -23,7 +23,6 @@ export default async function SahamPage({
   const { ticker } = await params
   const supabase = await createClient()
 
-  // Validasi ticker ada di database
   const { data: stock } = await supabase
     .from('stocks')
     .select('ticker')
