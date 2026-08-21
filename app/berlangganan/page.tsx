@@ -30,8 +30,10 @@ const METHODS = [
 // di supabase/functions/create-payment/index.ts. Backend itu yang jadi
 // sumber kebenaran harga (dipakai buat bikin transaksi Midtrans beneran),
 // angka di sini cuma buat ditampilkan sebelum user checkout.
-// Saat ini backend pakai Rp 49.000 — SESUAIKAN salah satu sisi sebelum go-live.
-const PREMIUM_PRICE = 49000
+// FIX (21 Agustus 2026): disamakan ke Rp59.000 sesuai backend live &
+// spec v5.0 section 10.3 (Rp59.000/bulan, grandfathered) -- sebelumnya
+// frontend salah tampil Rp49.000 padahal Midtrans nagih Rp59.000.
+const PREMIUM_PRICE = 59000
 
 const COMPARE_ROWS: [string, string, string][] = [
   ['Token AI per hari', '5', '50'],
