@@ -85,7 +85,7 @@ function SignalBadge({ direction }: { direction: Direction }) {
 }
 
 export default function ScreenerPage() {
-  const supabase = createClient()
+  const [supabase] = useState(() => createClient())
 
   const [stocks, setStocks] = useState<Stock[]>([])
   const [sectors, setSectors] = useState<Sector[]>([])
@@ -156,7 +156,7 @@ export default function ScreenerPage() {
 
     load()
     return () => { active = false }
-  }, [])
+  }, [supabase])
 
   const volumeQuartiles = useMemo(() => {
     const volumes = stocks

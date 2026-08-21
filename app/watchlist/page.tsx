@@ -47,7 +47,7 @@ function pctChange(price: number | null, prev: number | null) {
 
 export default function WatchlistPage() {
   const router = useRouter()
-  const supabase = createClient()
+  const [supabase] = useState(() => createClient())
 
   const [user, setUser] = useState<User | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
@@ -84,7 +84,7 @@ export default function WatchlistPage() {
     return () => {
       active = false
     }
-  }, [])
+  }, [router, supabase])
 
   const loadFolders = useCallback(async (userId: string) => {
     const { data } = await supabase
@@ -99,7 +99,7 @@ export default function WatchlistPage() {
     } else {
       setLoading(false)
     }
-  }, [])
+  }, [supabase])
 
   useEffect(() => {
     if (!user) return
@@ -119,7 +119,7 @@ export default function WatchlistPage() {
 
     setItems((data as unknown as WatchlistItem[]) ?? [])
     setLoading(false)
-  }, [])
+  }, [supabase])
 
   useEffect(() => {
     if (!activeFolderId) return

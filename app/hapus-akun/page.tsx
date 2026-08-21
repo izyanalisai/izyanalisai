@@ -9,7 +9,7 @@ type Step = 'loading' | 'set-password' | 'confirm'
 
 export default function HapusAkunPage() {
   const router = useRouter()
-  const supabase = createClient()
+  const [supabase] = useState(() => createClient())
 
   const [user, setUser] = useState<User | null>(null)
   const [step, setStep] = useState<Step>('loading')
@@ -42,7 +42,7 @@ export default function HapusAkunPage() {
     return () => {
       active = false
     }
-  }, [])
+  }, [router, supabase])
 
   const handleSetPassword = async (e: React.FormEvent) => {
     e.preventDefault()

@@ -11,7 +11,7 @@ export default function Header() {
   const [loading, setLoading] = useState(true)
   const router = useRouter()
   const pathname = usePathname()
-  const supabase = createClient()
+  const [supabase] = useState(() => createClient())
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -26,7 +26,7 @@ export default function Header() {
     return () => {
       listener.subscription.unsubscribe()
     }
-  }, [])
+  }, [supabase])
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
