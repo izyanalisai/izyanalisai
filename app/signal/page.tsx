@@ -23,6 +23,13 @@ type SignalRow = {
   stop_loss: number | null
   current_price: number | null
   unlocked: boolean
+  // FIX (21 Agustus 2026): RPC list_active_signals sudah mengembalikan
+  // is_stale sejak migration 20260820105349_list_active_signals_fallback_stale_v5,
+  // tapi field ini belum pernah dibaca di frontend -- akibatnya label
+  // "data lama" dari spec v5.0 4.4 tidak pernah muncul walau RPC lagi
+  // fallback ke sinyal kemarin. Field ini opsional (?) supaya tetap aman
+  // kalau ada RPC lama yang belum ke-refresh cache-nya di client.
+  is_stale?: boolean
 }
 
 // Dokumen 5.5: filter Semua, BUY, SELL, Daily, Swing. "Daily"/"Swing" di
@@ -286,7 +293,15 @@ export default function SignalPage() {
 
         {!loading && filtered.length === 0 && (
           <p className="text-slate-500 text-sm">
-            Belum ada sinyal aktif.
+            Belum ada riwayat sinyal untuk ditampilkan.
+          </p>
+        )}
+        {/* Spec v5.0 4.4: kalau RPC lagi fallback (is_stale=true di semua
+            baris karena tidak ada signal ACTIVE saat ini), kasih label
+            jelas -- jangan biarkan user kira ini sinyal hari ini. */}
+        {!loading && filtered.length > 0 && filtered[0]?.is_stale && (
+          <p className="text-[11px] text-amber-400 -mt-1 mb-1">
+            Belum ada sinyal baru hari ini — menampilkan sinyal terakhir yang tersedia.
           </p>
         )}
 
