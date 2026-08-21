@@ -8,7 +8,7 @@ import Link from 'next/link'
 type SignalRow = {
   id: string
   direction: 'BUY' | 'SELL'
-  status: 'ACTIVE' | 'HIT_TP1'
+  status: 'ACTIVE' | 'HIT_TP1' | 'HIT_TP2' | 'HIT_SL' | 'INVALIDATED' | 'EXPIRED'
   signal_tier: 'daily' | 'swing'
   created_at: string
   stock_id: string
@@ -52,6 +52,17 @@ const tierLabel: Record<string, string> = {
   swing: 'Swing',
 }
 
+// Fix 21 Agustus 2026: badge lifecycle terminal (dokumen 24.2) -- sebelumnya
+// hanya HIT_TP1 yang dibedakan dari ACTIVE, INVALIDATED/EXPIRED/HIT_SL/HIT_TP2
+// tidak punya penanda apa pun di kartu sehingga terlihat seperti sinyal hidup.
+const statusBadge: Record<string, { text: string; bg: string; text_color: string } | undefined> = {
+  HIT_TP1: { text: 'Kena TP1', bg: 'bg-[#22C55E]/15', text_color: 'text-[#22C55E]' },
+  HIT_TP2: { text: 'Kena TP2', bg: 'bg-[#22C55E]/15', text_color: 'text-[#22C55E]' },
+  HIT_SL: { text: 'Kena SL', bg: 'bg-[#EF4444]/15', text_color: 'text-[#EF4444]' },
+  INVALIDATED: { text: 'Dibatalkan', bg: 'bg-white/10', text_color: 'text-slate-400' },
+  EXPIRED: { text: 'Kedaluwarsa', bg: 'bg-white/10', text_color: 'text-slate-400' },
+}
+
 const FILTERS: { value: FilterValue; label: string }[] = [
   { value: 'ALL', label: 'Semua' },
   { value: 'BUY', label: 'BUY' },
@@ -68,7 +79,15 @@ function formatHarga(n: number | null | undefined) {
 // Dokumen 6.4 Progress Bar: ACTIVE menunjukkan posisi harga terkini di
 // antara entry dan TP/SL; HIT_TP1 bar hijau sampai TP1.
 function computeProgress(s: SignalRow): { pct: number; color: string } {
-  if (s.status === 'HIT_TP1') return { pct: 100, color: '#22C55E' }
+  // Fix 21 Agustus 2026: sebelumnya cuma HIT_TP1 yang ditangani khusus --
+  // status terminal lain (INVALIDATED/EXPIRED/HIT_SL/HIT_TP2) jatuh ke
+  // kalkulasi generik berbasis current_price, yang bisa nampilin progress
+  // bar menyesatkan (mis. sinyal INVALIDATED kelihatan seolah masih jalan
+  // menuju TP). Semua status terminal sekarang dikunci ke bar penuh dengan
+  // warna sesuai hasil akhirnya, bukan dihitung ulang dari harga sekarang.
+  if (s.status === 'HIT_TP1' || s.status === 'HIT_TP2') return { pct: 100, color: '#22C55E' }
+  if (s.status === 'HIT_SL') return { pct: 100, color: '#EF4444' }
+  if (s.status === 'INVALIDATED' || s.status === 'EXPIRED') return { pct: 100, color: '#64748B' }
 
   const { entry_price, tp1, stop_loss, current_price, direction } = s
   if (current_price == null) {
@@ -351,6 +370,13 @@ export default function SignalPage() {
                       >
                         {s.direction}
                       </span>
+                      {statusBadge[s.status] && (
+                        <span
+                          className={`text-[10px] font-medium px-2 py-1 rounded-full ${statusBadge[s.status]!.bg} ${statusBadge[s.status]!.text_color}`}
+                        >
+                          {statusBadge[s.status]!.text}
+                        </span>
+                      )}
                     </div>
                   </div>
 
