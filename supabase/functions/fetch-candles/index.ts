@@ -40,14 +40,25 @@ async function fetchYahoo(ticker, timeframe, full) {
   const quote = result.indicators?.quote?.[0] ?? {};
   const { open = [], high = [], low = [], close = [], volume = [] } = quote;
   const rows = [];
-  for(let i = 0; i < timestamps.length; i++)if (open[i] != null && high[i] != null && low[i] != null && close[i] != null) rows.push({
-    ts: new Date(timestamps[i] * 1000).toISOString(),
-    open: open[i],
-    high: high[i],
-    low: low[i],
-    close: close[i],
-    volume: volume[i] ?? null
-  });
+  for(let i = 0; i < timestamps.length; i++)if (open[i] != null && high[i] != null && low[i] != null && close[i] != null) {
+    // FIX 20 Agustus 2026: normalisasi ts ke konvensi WIB midnight yang SAMA persis
+    // dengan fetch-idx-eod ({tanggal}T00:00:00+07:00). Sebelumnya pakai epoch mentah
+    // dari Yahoo (biasanya ~09:00 WIB / market open UTC), jadi beda ts dengan candle
+    // IDX walau tanggal tradingnya sama -> upsert onConflict(stock_id,timeframe,ts)
+    // gagal collide, bikin baris candle terpisah (root cause data campur IDX/Yahoo).
+    const rawUtc = new Date(timestamps[i] * 1000);
+    const wibShifted = new Date(rawUtc.getTime() + 7 * 60 * 60 * 1000);
+    const dateStr = wibShifted.toISOString().slice(0, 10);
+    rows.push({
+      ts: `${dateStr}T00:00:00+07:00`,
+      source: 'YAHOO',
+      open: open[i],
+      high: high[i],
+      low: low[i],
+      close: close[i],
+      volume: volume[i] ?? null
+    });
+  }
   return rows;
 }
 Deno.serve(async (req)=>{

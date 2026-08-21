@@ -52,6 +52,26 @@ Deno.serve(async (req)=>{
     });
   }
   const user = userData.user;
+  // Rate limit: cegah spam order/snap-token ke Midtrans (tiap panggilan yang
+  // lolos ke sini adalah 1 API call ke Midtrans + 1 row 'pending' baru di
+  // tabel payments -- gap dari audit 21 Agustus 2026, sebelumnya endpoint ini
+  // sama sekali tidak dibatasi selain oleh auth).
+  const { data: rateOk, error: rateErr } = await supabase.rpc('check_rate_limit', {
+    p_scope: 'create_payment',
+    p_identity: user.id,
+    p_max_hits: 5,
+    p_window_seconds: 60
+  });
+  if (rateErr) {
+    console.error('[create-payment] check_rate_limit error:', rateErr.message);
+  } else if (rateOk === false) {
+    return new Response(JSON.stringify({
+      error: 'RATE_LIMITED',
+      detail: 'Terlalu banyak percobaan pembayaran, coba lagi sebentar'
+    }), {
+      status: 429
+    });
+  }
   let body;
   try {
     body = await req.json();

@@ -2,12 +2,12 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 // Worker IDX EOD (OTOMATIS) - dibuat 17 Agustus 2026, diperbaiki 18-19 Agustus 2026,
 // MIGRASI KE SCRAPERAPI 20 Agustus 2026 (ganti dari ScrapingBee yang trial/limited).
-// Sumber: endpoint JSON resmi di balik halaman "Ringkasan Saham" idx.co.id.
-// Endpoint ini di belakang Cloudflare JS-challenge, jadi WAJIB lewat ScraperAPI
-// (render=true + premium=true) -- ini charge credit tiap panggilan. Job ini
-// didesain untuk GAGAL DENGAN AMAN kalau ScraperAPI error/quota habis: hanya
-// log job_runs ERROR, tidak pernah menyentuh data -- sistem otomatis tetap
-// jalan pakai Yahoo Fallback seperti sebelumnya (sesuai Section 3.2 spec).
+// FIX 20 Agustus 2026 (sesi audit sore): tambah early-exit check -- kalau trade_date
+// hari ini SUDAH PROCESSED, langsung SKIPPED tanpa manggil ScraperAPI lagi. Sebelumnya
+// cron jalan 11x/hari (tiap 15 menit 19.00-23.00 WIB) dan tiap kali TETAP manggil
+// ScraperAPI meski data hari itu sudah sukses didapat di percobaan pertama -- buang2
+// credit ScraperAPI dan bikin job_runs penuh error DNS-timeout palsu (karena permintaan
+// lanjut ke path yang sama, sering di-throttle/hang oleh ScraperAPI setelah panggilan awal).
 function todayWIB() {
   const now = new Date();
   const wib = new Date(now.getTime() + 7 * 60 * 60 * 1000);
@@ -71,6 +71,22 @@ Deno.serve(async (req)=>{
       status: 401
     });
   }
+  const url = new URL(req.url);
+  const dateOverride = url.searchParams.get('date');
+  const expectedDate = dateOverride && /^\d{4}-\d{2}-\d{2}$/.test(dateOverride) ? dateOverride : todayWIB();
+  // === EARLY EXIT: kalau tanggal ini sudah PROCESSED, jangan panggil ScraperAPI lagi ===
+  const { data: existing } = await admin.from('idx_eod_uploads').select('status, matched_count').eq('trade_date', expectedDate).maybeSingle();
+  if (existing && existing.status === 'PROCESSED') {
+    return new Response(JSON.stringify({
+      status: 'SKIPPED_ALREADY_DONE',
+      reason: `trade_date ${expectedDate} sudah PROCESSED sebelumnya (matched=${existing.matched_count}), tidak perlu panggil ScraperAPI lagi`,
+      expectedDate
+    }), {
+      status: 200
+    });
+  }
+  const expectedDateCompact = toCompactDate(expectedDate);
+  const targetPath = '/primary/TradingSummary/GetStockSummary';
   const { data: saKeyRow } = await admin.from('internal_secrets').select('value').eq('key', 'scraperapi_api_key').maybeSingle();
   const saKey = saKeyRow?.value;
   if (!saKey) return new Response(JSON.stringify({
@@ -78,11 +94,6 @@ Deno.serve(async (req)=>{
   }), {
     status: 500
   });
-  const url = new URL(req.url);
-  const dateOverride = url.searchParams.get('date');
-  const expectedDate = dateOverride && /^\d{4}-\d{2}-\d{2}$/.test(dateOverride) ? dateOverride : todayWIB();
-  const expectedDateCompact = toCompactDate(expectedDate);
-  const targetPath = '/primary/TradingSummary/GetStockSummary';
   let result;
   try {
     result = await fetchViaScraperAPI(saKey, targetPath, expectedDateCompact);
