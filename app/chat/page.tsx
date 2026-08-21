@@ -71,8 +71,15 @@ export default function ChatPage() {
         setSending(false)
         return
       }
-      const { data: publicUrl } = supabase.storage.from('chart-images').getPublicUrl(path)
-      imageUrl = publicUrl.publicUrl
+      const { data: signedUrlData, error: signErr } = await supabase.storage
+        .from('chart-images')
+        .createSignedUrl(path, 60 * 60 * 24 * 60) // 60 hari, bucket sekarang private
+      if (signErr || !signedUrlData) {
+        setError('Gagal membuat URL gambar: ' + (signErr?.message ?? 'unknown'))
+        setSending(false)
+        return
+      }
+      imageUrl = signedUrlData.signedUrl
     }
 
     const userMsg: ChatMessage = {
