@@ -19,9 +19,16 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
 
-      - name: Repair migration history
+      - name: Repair migration history (missing)
         run: |
           supabase migration repair --status reverted 20260821114240 20260821114344 20260822011234 20260822011341 20260822020421 20260822025910 20260822030413 20260822034609 20260822043314 20260822043736 20260822163440 20260822163451 20260822163513 20260822163540 20260822172650 20260822172709 20260822172751
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+      - name: Repair migration history (already applied manually)
+        run: |
+          supabase migration repair --status applied 20260823060000
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
