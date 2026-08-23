@@ -20,8 +20,15 @@ export async function middleware(request: NextRequest) {
     (p) => path === p || path.startsWith(p + '/')
   )
 
-  // Lewati auth check untuk halaman publik & static assets
-  if (isPublic) {
+  // Lewati auth check untuk halaman publik, static assets, DAN /api/*.
+  // BUG FIX (23 Agustus 2026): route /api/cron/fetch-ipo-calendar (worker
+  // Railway, auth pakai header x-worker-secret vs internal_secrets) kena
+  // redirect ke /landing oleh middleware ini karena tidak pernah punya user
+  // session cookie -- request server-to-server jadi tidak pernah sampai ke
+  // handler-nya. Semua /api/* auth-nya masing-masing (worker secret, RLS via
+  // service role, dsb), jadi middleware berbasis session cookie ini tidak
+  // relevan buat mereka.
+  if (isPublic || path.startsWith('/api/')) {
     return NextResponse.next({ request })
   }
 
