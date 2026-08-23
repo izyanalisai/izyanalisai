@@ -49,6 +49,13 @@ function parseSSEToContent(raw) {
 async function callProvider(providerLabel, baseUrl, apiKey, models, prompt, extraHeaders = {}) {
   let lastError = null;
   for (const model of models){
+    // Timeout eksplisit 8 detik per model. Tanpa ini, fetch() yang hang
+    // (misal 9Router di Railway lemot/down) akan menunggu sampai seluruh
+    // edge function di-kill paksa oleh gateway Supabase (504/546) SEBELUM
+    // sempat mencoba fallback ke provider berikutnya -- inilah penyebab
+    // utama tingkat gagal ~95% yang ditemukan di audit 22 Agustus 2026.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(()=>controller.abort(), 8000);
     try {
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
@@ -71,8 +78,10 @@ async function callProvider(providerLabel, baseUrl, apiKey, models, prompt, extr
           ],
           max_tokens: 300,
           stream: false
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       if (res.status === 429 || res.status === 402 || !res.ok) {
         lastError = await res.text();
         continue;
@@ -103,7 +112,8 @@ async function callProvider(providerLabel, baseUrl, apiKey, models, prompt, extr
         }
       };
     } catch (err) {
-      lastError = err;
+      clearTimeout(timeoutId);
+      lastError = err?.name === 'AbortError' ? `timeout setelah 8s (model: ${model})` : err;
       continue;
     }
   }
