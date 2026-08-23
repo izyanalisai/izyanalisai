@@ -49,13 +49,21 @@ function parseSSEToContent(raw) {
 async function callProvider(providerLabel, baseUrl, apiKey, models, prompt, extraHeaders = {}) {
   let lastError = null;
   for (const model of models){
-    // Timeout eksplisit 8 detik per model. Tanpa ini, fetch() yang hang
-    // (misal 9Router di Railway lemot/down) akan menunggu sampai seluruh
-    // edge function di-kill paksa oleh gateway Supabase (504/546) SEBELUM
-    // sempat mencoba fallback ke provider berikutnya -- inilah penyebab
-    // utama tingkat gagal ~95% yang ditemukan di audit 22 Agustus 2026.
+    // Timeout eksplisit 55 detik per model (FIX v88, 22 Agustus 2026 -- sudah
+    // terbukti jalan di production, JANGAN diturunin lagi ke beberapa detik).
+    // Root cause tingkat gagal ~95% yang ditemukan sebelumnya BUKAN fetch()
+    // yang hang, tapi model 'ivann' (routing ke grok-4.5-high di 9Router)
+    // yang memang butuh waktu lama untuk reasoning (bisa >600 completion
+    // tokens walau prompt cuma 2 kata). Timeout terlalu pendek (mis. 8
+    // detik) justru bikin response valid-tapi-lambat kena abort duluan,
+    // trigger fallback ke OpenRouter yang juga sering gagal -- fail rate
+    // balik parah. Dispatcher (trigger_generate_signal_reasoning) sudah
+    // menyesuaikan: limit=2 per panggilan supaya 2x55s=110s tetap di bawah
+    // deadline edge function (130s) dan limit pg_net (150s). Kalau mau naikin
+    // limit per panggilan, naikin juga timeout budget di dispatcher.
+    const TIMEOUT_MS = 55000;
     const controller = new AbortController();
-    const timeoutId = setTimeout(()=>controller.abort(), 8000);
+    const timeoutId = setTimeout(()=>controller.abort(), TIMEOUT_MS);
     try {
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
@@ -113,7 +121,7 @@ async function callProvider(providerLabel, baseUrl, apiKey, models, prompt, extr
       };
     } catch (err) {
       clearTimeout(timeoutId);
-      lastError = err?.name === 'AbortError' ? `timeout setelah 8s (model: ${model})` : err;
+      lastError = err?.name === 'AbortError' ? `timeout setelah ${TIMEOUT_MS}ms (model: ${model})` : err;
       continue;
     }
   }
