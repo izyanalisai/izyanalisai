@@ -97,6 +97,15 @@ Deno.serve(async (req)=>{
     });
     if (activateErr) {
       console.error('gagal aktivasi subscription', activateErr);
+      // FIX 23 Agustus 2026 (celah desain dari audit 22 Agustus): payment_events
+      // sudah terlanjur diinsert SEBELUM RPC ini dipanggil (untuk idempotency
+      // terhadap request paralel). Kalau RPC gagal di sini dan row itu
+      // dibiarkan, retry webhook berikutnya dari Midtrans akan short-circuit
+      // di pengecekan unique constraint di atas dan TIDAK PERNAH mencoba lagi
+      // aktivasi -- payment permanen sukses tapi subscription tidak pernah
+      // aktif, tanpa recovery otomatis. Hapus lagi row payment_events supaya
+      // retry Midtrans berikutnya bisa mencoba dari awal.
+      await admin.from('payment_events').delete().eq('external_event_id', transactionId);
       return new Response('ACTIVATION_ERROR', {
         status: 500
       });
