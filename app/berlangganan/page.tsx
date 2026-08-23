@@ -102,14 +102,20 @@ export default function BerlanggananPage() {
     if (!confirm('Batalkan langganan? Premium tetap aktif sampai akhir periode berjalan.')) return
     setSubmitting(true)
     setError(null)
-    const { error: updErr } = await supabase
-      .from('subscriptions')
-      .update({ cancel_at_period_end: true, status: 'pending_cancel' })
-      .eq('user_id', user.id)
-      .eq('status', 'active')
+    // FIX: sebelumnya .update() langsung ke tabel subscriptions -- diblokir RLS
+    // (tidak ada UPDATE policy untuk user), tapi Supabase JS tidak melempar error
+    // untuk 0 baris ter-update, jadi UI selalu bilang "berhasil" walau DB tidak
+    // pernah berubah. cancel_subscription() adalah RPC SECURITY DEFINER yang
+    // sudah benar (auth check, idempotent, audit log) -- sudah ada di DB tapi
+    // belum pernah dipanggil dari frontend.
+    const { data: rpcResult, error: rpcErr } = await supabase.rpc('cancel_subscription')
     setSubmitting(false)
-    if (updErr) {
+    if (rpcErr) {
       setError('Gagal membatalkan langganan. Coba lagi.')
+      return
+    }
+    if (rpcResult?.already_cancelled) {
+      setError('Langganan sudah tidak aktif.')
       return
     }
     setSubscription((s) => (s ? { ...s, cancel_at_period_end: true, status: 'pending_cancel' } : s))

@@ -3,6 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 
+export const runtime = 'edge'
+
 export async function generateMetadata({
   params,
 }: {

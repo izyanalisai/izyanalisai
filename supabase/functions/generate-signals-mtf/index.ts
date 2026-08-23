@@ -45,6 +45,34 @@ function computeLevelMode(tier, tp1Zone) {
   if (tp1Zone && tp1Zone.touch_count >= 2) return 'STANDARD';
   return 'SCALP';
 }
+// CHURN FIX (23 Agustus 2026): sebelumnya generate-signals-mtf men-supersede
+// sinyal ACTIVE lama SETIAP kali cron jalan dan setup masih confluence, walau
+// levelnya persis sama dengan sebelumnya -- akibatnya sinyal churn terus tiap
+// jam cron jalan, padahal tidak ada perubahan setup nyata. Sekarang dicek dulu:
+// kalau level baru masih dalam toleransi SR_BUFFER_PCT (konvensi toleransi
+// harga yang sudah dipakai di file ini, 0.3%) dari level lama di SEMUA field
+// kunci, dianggap "setup sama" -> tidak insert baris baru, tidak supersede,
+// cukup refresh expires_at sinyal lama. Kalau ada satu saja field yang beda
+// di luar toleransi, dianggap setup beneran berubah -> insert+supersede seperti
+// biasa (behavior lama, tidak diubah).
+function levelsMatch(a, b) {
+  if (a == null || b == null) return a === b;
+  const base = Math.abs(a) > 0 ? Math.abs(a) : 1;
+  return Math.abs(a - b) / base <= SR_BUFFER_PCT;
+}
+function isSameSetup(oldSignal, newLevels) {
+  if (!oldSignal) return false;
+  const fields = [
+    'buy_area_low',
+    'buy_area_high',
+    'tp1',
+    'tp2',
+    'stop_loss',
+    'support_level',
+    'resistance_level'
+  ];
+  return fields.every((f)=>levelsMatch(oldSignal[f] ?? null, newLevels[f] ?? null));
+}
 function findPivots(candles) {
   const highs = [];
   const lows = [];
@@ -426,9 +454,30 @@ Deno.serve(async (req)=>{
         const risk = entryPrice - stopLoss;
         const riskReward = risk > 0 ? Math.abs(tp1 - entryPrice) / risk : null;
         const levelMode = computeLevelMode(cfg.tier, resistanceZoneTp1);
+        const { data: oldActiveRows } = await supabase.from('signals').select('id, buy_area_low, buy_area_high, tp1, tp2, stop_loss, support_level, resistance_level').eq('stock_id', stock.id).eq('signal_tier', cfg.tier).eq('status', 'ACTIVE').is('superseded_by', null);
+        const oldActive = oldActiveRows ?? [];
+        if (oldActive.length === 1 && isSameSetup(oldActive[0], {
+          buy_area_low: supportZone.price_low,
+          buy_area_high: entryPrice,
+          tp1,
+          tp2,
+          stop_loss: stopLoss,
+          support_level: supportZone.mid_price,
+          resistance_level: resistanceZoneTp1.mid_price
+        })) {
+          await supabase.from('signals').update({
+            expires_at: await getExpiry(cfg.tier, now, supabase)
+          }).eq('id', oldActive[0].id);
+          totalBuy++;
+          recordEvent(stock.id, 'BUY', {
+            entry_type: 'UNCHANGED_SETUP_REFRESH',
+            data_source: dataSource,
+            level_mode: levelMode
+          });
+          continue;
+        }
         zonesToPersist.push(supportZone, resistanceZoneTp1);
         if (tp2Zone) zonesToPersist.push(tp2Zone);
-        const { data: oldActive } = await supabase.from('signals').select('id').eq('stock_id', stock.id).eq('signal_tier', cfg.tier).eq('status', 'ACTIVE').is('superseded_by', null);
         const { data: zoneIds, error: zoneErr } = await insertZones(supabase, stock.id, zonesToPersist, now);
         if (zoneErr) {
           totalFailed++;
@@ -520,10 +569,12 @@ Deno.serve(async (req)=>{
           });
           continue;
         }
-        if (oldActive && oldActive.length > 0) {
+        if (oldActive.length > 0) {
           await supabase.from('signals').update({
             status: 'INVALIDATED',
-            superseded_by: inserted.id
+            superseded_by: inserted.id,
+            superseded_unresolved: true,
+            resolved_at: now.toISOString()
           }).in('id', oldActive.map((o)=>o.id));
         }
         totalBuy++;
@@ -584,10 +635,29 @@ Deno.serve(async (req)=>{
         const risk = invalidation - entryPrice;
         const riskReward = risk > 0 ? Math.abs(downsideSupport1 - entryPrice) / risk : null;
         const levelMode = computeLevelMode(cfg.tier, supportZoneTp1);
+        const { data: oldActiveRows } = await supabase.from('signals').select('id, tp1, tp2, stop_loss, support_level, resistance_level').eq('stock_id', stock.id).eq('signal_tier', cfg.tier).eq('status', 'ACTIVE').is('superseded_by', null);
+        const oldActive = oldActiveRows ?? [];
+        if (oldActive.length === 1 && isSameSetup(oldActive[0], {
+          tp1: downsideSupport1,
+          tp2: downsideSupport2,
+          stop_loss: invalidation,
+          support_level: supportZoneTp1.mid_price,
+          resistance_level: resistanceZone.mid_price
+        })) {
+          await supabase.from('signals').update({
+            expires_at: await getExpiry(cfg.tier, now, supabase)
+          }).eq('id', oldActive[0].id);
+          totalSell++;
+          recordEvent(stock.id, 'SELL', {
+            entry_type: 'UNCHANGED_SETUP_REFRESH',
+            data_source: dataSource,
+            level_mode: levelMode
+          });
+          continue;
+        }
         zonesToPersist.push(resistanceZone, supportZoneTp1);
         if (support2Zone) zonesToPersist.push(support2Zone);
         if (brokenSupportZone) zonesToPersist.push(brokenSupportZone);
-        const { data: oldActive } = await supabase.from('signals').select('id').eq('stock_id', stock.id).eq('signal_tier', cfg.tier).eq('status', 'ACTIVE').is('superseded_by', null);
         const { data: zoneIds, error: zoneErr } = await insertZones(supabase, stock.id, zonesToPersist, now);
         if (zoneErr) {
           totalFailed++;
@@ -680,10 +750,12 @@ Deno.serve(async (req)=>{
           });
           continue;
         }
-        if (oldActive && oldActive.length > 0) {
+        if (oldActive.length > 0) {
           await supabase.from('signals').update({
             status: 'INVALIDATED',
-            superseded_by: inserted.id
+            superseded_by: inserted.id,
+            superseded_unresolved: true,
+            resolved_at: now.toISOString()
           }).in('id', oldActive.map((o)=>o.id));
         }
         totalSell++;

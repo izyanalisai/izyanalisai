@@ -1,132 +1,16 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { callAI, simplePrompt, sanitizeShortReply, AllProvidersFailedError } from '../_shared/callAI.ts';
 // Worker Trending Score - generate 1-2 kalimat alasan kenapa saham lagi trending.
-// Tier 1: 9Router (self-hosted di Railway, OpenAI-compatible) -- provider utama.
-// Tier 2: OpenRouter, 3 model gratis -- fallback kalau 9Router gagal total.
 // Diproses SATU-SATU (bukan paralel).
 // RESUMABLE OTOMATIS: selalu ambil saham yang trending_reason-nya masih NULL.
-const NINEROUTER_MODELS = [
-  Deno.env.get('NINEROUTER_MODEL') || 'auto'
-];
-const FREE_MODELS = [
-  'nvidia/nemotron-3-ultra-550b-a55b:free',
-  'google/gemma-4-31b-it:free',
-  'google/gemma-4-26b-a4b-it:free'
-];
+//
+// FIX 23 Agustus 2026: sebelumnya worker ini punya callAIChain()/callProvider()
+// sendiri (copy-paste) yang HANYA baca kredensial dari Deno.env tanpa fallback
+// ke internal_secrets -- beda dari worker lain yang sudah dapat fix itu, celah
+// yang tidak konsisten. Sekarang pakai callAI(task_type) terpusat di
+// _shared/callAI.ts (spec v5.0 section 14.2) yang sudah benar fallback-nya dan
+// punya timeout 20s per model.
 const SYSTEM_PROMPT = 'Kamu menulis 1-2 kalimat singkat bahasa Indonesia yang menjelaskan kenapa sebuah saham sedang trending, berdasarkan skor & label yang diberikan. Jangan menyebut angka harga baru, jangan kasih rekomendasi buy/sell.';
-const REQUEST_TIMEOUT_MS = 20000;
-function sanitizeReply(raw) {
-  let text = raw.trim();
-  const marker = SYSTEM_PROMPT.slice(0, 25);
-  const idx = text.indexOf(marker);
-  if (idx !== -1) text = text.slice(0, idx).trim();
-  text = text.replace(/^["']|["']$/g, '').trim();
-  return text;
-}
-// FIX (19 Agustus 2026): 9Router kadang balas format SSE walau stream tidak
-// diminta -- res.json() gagal parse. Sama seperti fix di chat-asisten-ai/
-// analyze-chart: minta stream:false eksplisit + fallback parse manual.
-function parseSSEToContent(raw) {
-  let content = '';
-  for (const line of raw.split('\n')){
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('data:')) continue;
-    const payload = trimmed.slice(5).trim();
-    if (!payload || payload === '[DONE]') continue;
-    try {
-      const chunk = JSON.parse(payload);
-      const delta = chunk?.choices?.[0]?.delta?.content ?? chunk?.choices?.[0]?.message?.content;
-      if (delta) content += delta;
-    } catch  {
-      continue;
-    }
-  }
-  return content;
-}
-async function callProvider(providerLabel, baseUrl, apiKey, models, prompt, extraHeaders = {}) {
-  let lastError = null;
-  for (const model of models){
-    const controller = new AbortController();
-    const timer = setTimeout(()=>controller.abort(), REQUEST_TIMEOUT_MS);
-    try {
-      const res = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          ...extraHeaders
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            {
-              role: 'system',
-              content: SYSTEM_PROMPT
-            },
-            {
-              role: 'user',
-              content: prompt
-            }
-          ],
-          max_tokens: 150,
-          stream: false
-        })
-      });
-      clearTimeout(timer);
-      if (res.status === 429 || res.status === 402 || !res.ok) {
-        lastError = await res.text();
-        continue;
-      }
-      const rawBody = await res.text();
-      let rawText = '';
-      let usageIn = 0, usageOut = 0;
-      try {
-        const data = JSON.parse(rawBody);
-        rawText = data?.choices?.[0]?.message?.content ?? '';
-        usageIn = data?.usage?.prompt_tokens ?? 0;
-        usageOut = data?.usage?.completion_tokens ?? 0;
-      } catch  {
-        console.error(`[generate-trending-reason] [${providerLabel}] model ${model} balas non-JSON (kemungkinan SSE), coba parse manual`);
-        rawText = parseSSEToContent(rawBody);
-      }
-      const text = sanitizeReply(rawText);
-      if (!text) {
-        lastError = 'response kosong setelah sanitize';
-        continue;
-      }
-      return {
-        text,
-        modelUsed: `${providerLabel}:${model}`,
-        usage: {
-          input: usageIn,
-          output: usageOut
-        }
-      };
-    } catch (err) {
-      clearTimeout(timer);
-      lastError = err;
-      continue;
-    }
-  }
-  throw new Error(`[${providerLabel}] semua model gagal: ${JSON.stringify(lastError)}`);
-}
-async function callAIChain(prompt, nineRouterKey, nineRouterBaseUrl) {
-  try {
-    return await callProvider('9router', nineRouterBaseUrl, nineRouterKey, NINEROUTER_MODELS, prompt);
-  } catch (nineRouterErr) {
-    const openRouterKey = Deno.env.get('OPENROUTER_API_KEY');
-    if (!openRouterKey) throw nineRouterErr;
-    try {
-      const baseUrl = Deno.env.get('AI_BASE_URL') || 'https://openrouter.ai/api/v1';
-      return await callProvider('openrouter', baseUrl, openRouterKey, FREE_MODELS, prompt, {
-        'HTTP-Referer': 'https://izyanalisai.vercel.app',
-        'X-Title': 'IzyAnalisAI Trending Reason'
-      });
-    } catch (openRouterErr) {
-      throw new Error(`Semua provider AI gagal. 9router: ${String(nineRouterErr)} | openrouter: ${String(openRouterErr)}`);
-    }
-  }
-}
 Deno.serve(async (req)=>{
   const supabase = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
   const providedSecret = req.headers.get('x-worker-secret');
@@ -136,15 +20,6 @@ Deno.serve(async (req)=>{
       error: 'unauthorized'
     }), {
       status: 401
-    });
-  }
-  const nineRouterKey = Deno.env.get('NINEROUTER_API_KEY');
-  const nineRouterBaseUrl = Deno.env.get('NINEROUTER_BASE_URL');
-  if (!nineRouterKey || !nineRouterBaseUrl) {
-    return new Response(JSON.stringify({
-      error: 'NINEROUTER_API_KEY/NINEROUTER_BASE_URL belum di-set di Supabase Secrets'
-    }), {
-      status: 500
     });
   }
   const url = new URL(req.url);
@@ -164,7 +39,12 @@ Deno.serve(async (req)=>{
   for (const s of stocks ?? []){
     try {
       const prompt = `Ticker: ${s.ticker} (${s.name})\nTrending Score: ${s.trending_score}\nTrending Label: ${s.trending_label}`;
-      const { text, modelUsed, usage } = await callAIChain(prompt, nineRouterKey, nineRouterBaseUrl);
+      const messages = simplePrompt(SYSTEM_PROMPT, prompt);
+      const { text: rawText, modelUsed, usage } = await callAI('FAST', messages);
+      const text = sanitizeShortReply(rawText, SYSTEM_PROMPT);
+      if (!text) {
+        throw new Error('response kosong setelah sanitize');
+      }
       await supabase.from('stocks').update({
         trending_reason: text
       }).eq('id', s.id);
@@ -178,7 +58,7 @@ Deno.serve(async (req)=>{
       success++;
     } catch (err) {
       failed++;
-      debugSamples[String(s.id)] = String(err);
+      debugSamples[String(s.id)] = err instanceof AllProvidersFailedError ? `[all providers failed] ${err.message}` : String(err);
       console.error(`[generate-trending-reason] gagal untuk stock ${s.id} (${s.ticker}):`, err);
     }
   }
