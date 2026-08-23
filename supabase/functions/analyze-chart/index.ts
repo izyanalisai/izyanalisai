@@ -92,6 +92,26 @@ Deno.serve(async (req)=>{
     }
     const user = userData.user;
     const admin = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
+    // FIX (audit 23 Agustus 2026): analyze-chart panggil vision AI (biaya per-call)
+    // tapi sebelumnya cuma dilindungi login, tanpa rate limit -- premium user
+    // sebelumnya bisa spam tanpa batas (quota harian di bawah cuma berlaku buat
+    // free user). Pola sama seperti create-payment.
+    const { data: rateOk, error: rateErr } = await admin.rpc('check_rate_limit', {
+      p_scope: 'analyze_chart',
+      p_identity: user.id,
+      p_max_hits: 10,
+      p_window_seconds: 3600
+    });
+    if (rateErr) {
+      console.error('[analyze-chart] check_rate_limit error:', rateErr.message);
+    } else if (rateOk === false) {
+      return new Response(JSON.stringify({
+        error: 'RATE_LIMITED',
+        detail: 'Terlalu banyak analisa chart, coba lagi dalam 1 jam'
+      }), {
+        status: 429
+      });
+    }
     const form = await req.formData();
     const file = form.get('image');
     const tickerRaw = form.get('ticker');
