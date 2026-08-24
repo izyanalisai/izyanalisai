@@ -25,14 +25,9 @@ const FREE_MODELS = [
 const CLOUDFLARE_MODELS = [
   '@cf/meta/llama-3.1-8b-instruct-fast',
   '@cf/meta/llama-3.2-3b-instruct',
-  '@cf/qwen/qwen1.5-14b-chat-awq',
   '@cf/meta/llama-3.1-8b-instruct',
   '@cf/mistralai/mistral-small-3.1-24b-instruct',
   '@cf/openai/gpt-oss-20b',
-  '@cf/google/gemma-3-27b-it',
-  '@cf/zhipu/glm-4.7-flash',
-  '@cf/qwen/qwen3-30b-a3b',
-  '@cf/ibm-granite/granite-4.0-instruct',
   '@cf/openai/gpt-oss-120b',
   '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
 ];
