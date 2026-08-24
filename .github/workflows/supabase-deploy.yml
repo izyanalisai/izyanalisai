@@ -25,6 +25,8 @@ jobs:
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
 
       - name: Push database migrations
+        id: db_push
+        continue-on-error: true
         run: supabase db push
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -35,3 +37,9 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+
+      - name: Fail job if migrations failed
+        if: steps.db_push.outcome == 'failure'
+        run: |
+          echo "::error::supabase db push gagal (lihat log step 'Push database migrations') -- functions tetap dideploy, tapi migrasi BELUM tersinkron. Cek Network Restrictions di Supabase dashboard."
+          exit 1
