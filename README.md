@@ -6,7 +6,7 @@ Platform analisa teknikal saham Indonesia berbasis AI.
 
 - Next.js 16 + React 19 + Tailwind CSS v4
 - Supabase (Database + Auth + Edge Functions)
-- Railway (Deployment)
+- Cloudflare (Deployment)
 
 ## Setup
 
