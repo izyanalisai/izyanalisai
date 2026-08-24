@@ -38,19 +38,32 @@ Deno.serve(async (_req) => {
   const report: Record<string, unknown> = {};
 
   const CLOUDFLARE_MODELS = [
-    '@cf/meta/llama-3.1-8b-instruct-fast',
-    '@cf/meta/llama-3.2-3b-instruct',
-    '@cf/qwen/qwen1.5-14b-chat-awq',
-    '@cf/meta/llama-3.1-8b-instruct',
-    '@cf/mistralai/mistral-small-3.1-24b-instruct',
-    '@cf/openai/gpt-oss-20b',
-    '@cf/google/gemma-3-27b-it',
-    '@cf/zhipu/glm-4.7-flash',
-    '@cf/qwen/qwen3-30b-a3b',
-    '@cf/ibm-granite/granite-4.0-instruct',
-    '@cf/openai/gpt-oss-120b',
-    '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-  ];
+  '@cf/openai/gpt-oss-120b',
+  '@cf/zai-org/glm-5.2',
+  '@cf/nvidia/nemotron-3-120b-a12b',
+  '@cf/moonshotai/kimi-k2.7-code',
+  '@cf/moonshotai/kimi-k2.6',
+  '@cf/deepseek-ai/deepseek-v4-pro-0813',
+  '@cf/deepseek-ai/deepseek-v4-flash-0731',
+  '@cf/meta/llama-4-scout-17b-16e-instruct',
+  '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+  '@cf/qwen/qwen3.8-27b',
+  '@cf/qwen/qwq-32b',
+  '@cf/qwen/qwen3-30b-a3b-fp8',
+  '@cf/qwen/qwen2.5-coder-32b-instruct',
+  '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
+  '@cf/mistralai/mistral-small-3.1-24b-instruct',
+  '@cf/google/gemma-4-26b-a4b-it',
+  '@cf/aisingapore/gemma-sea-lion-v4-27b-it',
+  '@cf/zai-org/glm-4.7-flash',
+  '@cf/ibm-granite/granite-4.0-h-micro',
+  '@cf/openai/gpt-oss-20b',
+  '@cf/meta/llama-3.2-11b-vision-instruct',
+  '@cf/meta/llama-3.1-8b-instruct-fp8',
+  '@cf/meta/llama-3.1-8b-instruct-fast',
+  '@cf/meta/llama-3.2-3b-instruct',
+  '@cf/meta/llama-3.2-1b-instruct',
+];
 
   if (cfAccountId && cfApiToken) {
     const results: Record<string, unknown>[] = [];
