@@ -1,14 +1,42 @@
+import { createClient } from 'jsr:@supabase/supabase-js@2';
+
 Deno.serve(async (_req) => {
-  const nineRouterKey = Deno.env.get('NINEROUTER_API_KEY') ?? null;
-  const nineRouterBaseUrl = Deno.env.get('NINEROUTER_BASE_URL') ?? null;
-  const cfAccountId = Deno.env.get('CLOUDFLARE_ACCOUNT_ID') ?? null;
-  const cfApiToken = Deno.env.get('CLOUDFLARE_API_TOKEN') ?? null;
+  let nineRouterKey = Deno.env.get('NINEROUTER_API_KEY') ?? null;
+  let nineRouterBaseUrl = Deno.env.get('NINEROUTER_BASE_URL') ?? null;
+  let cfAccountId = Deno.env.get('CLOUDFLARE_ACCOUNT_ID') ?? null;
+  let cfApiToken = Deno.env.get('CLOUDFLARE_API_TOKEN') ?? null;
+
+  // Fallback ke internal_secrets -- pola yang sama seperti chat-asisten-ai,
+  // generate-signal-reasoning, generate-trending-reason, fetch-news. Kredensial
+  // CF/9Router bisa disimpan di env var ATAU di tabel internal_secrets, jadi
+  // diagnostic ini harus cek dua-duanya juga, bukan cuma env var.
+  if (!cfAccountId || !cfApiToken || !nineRouterKey || !nineRouterBaseUrl) {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (supabaseUrl && serviceKey) {
+      const admin = createClient(supabaseUrl, serviceKey);
+      const { data: rows } = await admin
+        .from('internal_secrets')
+        .select('key,value')
+        .in('key', [
+          'nineRouter_api_key',
+          'nineRouter_base_url',
+          'cloudflare_account_id',
+          'cloudflare_api_token',
+        ]);
+      const map = Object.fromEntries(
+        (rows ?? []).map((r: { key: string; value: string }) => [r.key, r.value]),
+      );
+      nineRouterKey = nineRouterKey || map['nineRouter_api_key'] || null;
+      nineRouterBaseUrl =
+        nineRouterBaseUrl || (map['nineRouter_base_url'] ? map['nineRouter_base_url'] + '/v1' : null);
+      cfAccountId = cfAccountId || map['cloudflare_account_id'] || null;
+      cfApiToken = cfApiToken || map['cloudflare_api_token'] || null;
+    }
+  }
 
   const report: Record<string, unknown> = {};
 
-  // Daftar 12 model persis sama seperti CLOUDFLARE_MODELS di chat-asisten-ai /
-  // generate-signal-reasoning / generate-trending-reason / fetch-news.
-  // Kalau daftar itu diubah, update juga di sini biar diagnosticnya tetap akurat.
   const CLOUDFLARE_MODELS = [
     '@cf/meta/llama-3.1-8b-instruct-fast',
     '@cf/meta/llama-3.2-3b-instruct',
@@ -24,7 +52,6 @@ Deno.serve(async (_req) => {
     '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
   ];
 
-  // --- Tier 1: Cloudflare Workers AI -- tes SEMUA 12 model satu-satu ---
   if (cfAccountId && cfApiToken) {
     const results: Record<string, unknown>[] = [];
     for (const model of CLOUDFLARE_MODELS) {
@@ -66,7 +93,6 @@ Deno.serve(async (_req) => {
     report.cloudflare_configured = false;
   }
 
-  // --- Tier 2: 9Router ---
   if (nineRouterKey && nineRouterBaseUrl) {
     try {
       const res = await fetch(`${nineRouterBaseUrl}/models`, {
