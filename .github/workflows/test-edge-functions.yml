@@ -1,0 +1,36 @@
+name: Test Edge Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+  pull_request:
+    paths:
+      - 'supabase/functions/**'
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v1.x
+
+      # Jalankan semua *.test.ts di bawah supabase/functions dalam satu perintah.
+      # Deno otomatis nemuin file lewat glob ini, gak perlu daftar satu-satu --
+      # test baru yang ditambah nanti (misal golden test cases §4 spec v6.1)
+      # otomatis ikut kejalan tanpa perlu edit workflow ini lagi.
+      - name: Run deno test
+        run: deno test --allow-none supabase/functions/**/*.test.ts
+
+      # Kalau push ke main lolos test tapi supabase-deploy.yml (trigger terpisah,
+      # paths sama) kebetulan jalan duluan sebelum test ini selesai, deploy TETAP
+      # jalan meskipun test gagal -- dua workflow ini independen. Ini disengaja
+      # dibiarkan terpisah (bukan digabung jadi satu job "test lalu deploy") supaya
+      # perubahan pertama tidak mengubah alur deploy yang sudah ada; kalau nanti
+      # mau bikin test jadi gate wajib sebelum deploy, supabase-deploy.yml perlu
+      # ditambah `needs: test` dan dipindah ke workflow yang sama.
