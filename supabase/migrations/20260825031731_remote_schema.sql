@@ -6,11 +6,11 @@ SET check_function_bodies = false;
 
 CREATE EXTENSION pg_cron WITH SCHEMA pg_catalog;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT DELETE, INSERT, SELECT, UPDATE ON TABLES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO anon;
 
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT, USAGE ON SEQUENCES TO anon;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT DELETE, INSERT, SELECT, UPDATE ON TABLES TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO authenticated;
 
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT, USAGE ON SEQUENCES TO authenticated;
 
@@ -80,6 +80,14 @@ DECLARE
   v_signals_today int;
   v_active_signals int;
   v_total_news int;
+  v_open_bug_reports int;
+  v_open_feature_requests int;
+  v_pending_payments int;
+  v_failed_jobs_24h int;
+  v_app_rating_avg numeric;
+  v_app_rating_count int;
+  v_queue_depth int;
+  v_cron_errors_today int;
 BEGIN
   IF NOT is_current_user_admin() THEN
     RAISE EXCEPTION 'unauthorized';
@@ -92,12 +100,33 @@ BEGIN
   SELECT COUNT(*) INTO v_active_signals FROM signals WHERE status = 'ACTIVE';
   SELECT COUNT(*) INTO v_total_news FROM news;
 
+  SELECT COUNT(*) INTO v_open_bug_reports FROM bug_reports WHERE status NOT IN ('RESOLVED','WONT_FIX');
+  SELECT COUNT(*) INTO v_open_feature_requests FROM feature_requests WHERE status NOT IN ('SHIPPED','DECLINED');
+  SELECT COUNT(*) INTO v_pending_payments FROM payments WHERE status = 'pending';
+  SELECT COUNT(*) INTO v_failed_jobs_24h FROM job_runs
+    WHERE status = 'ERROR' AND started_at > now() - interval '24 hours';
+  SELECT round(avg(rating)::numeric, 2), count(*) INTO v_app_rating_avg, v_app_rating_count
+    FROM app_ratings;
+
+  SELECT COUNT(*) INTO v_queue_depth FROM mtf_pipeline_runs WHERE status = 'RUNNING';
+
+  SELECT COUNT(*) INTO v_cron_errors_today FROM job_runs
+    WHERE status = 'ERROR' AND started_at >= (now() AT TIME ZONE 'Asia/Jakarta')::date;
+
   RETURN jsonb_build_object(
     'total_users', v_total_users,
     'premium_users', v_premium_users,
     'signals_today', v_signals_today,
     'active_signals', v_active_signals,
-    'total_news', v_total_news
+    'total_news', v_total_news,
+    'open_bug_reports', v_open_bug_reports,
+    'open_feature_requests', v_open_feature_requests,
+    'pending_payments', v_pending_payments,
+    'failed_jobs_24h', v_failed_jobs_24h,
+    'app_rating_avg', v_app_rating_avg,
+    'app_rating_count', v_app_rating_count,
+    'queue_depth', v_queue_depth,
+    'cron_errors_today', v_cron_errors_today
   );
 END;
 $function$;
@@ -130,6 +159,8 @@ begin
     where id = p_detection_id and status = 'NEW';
 end;
 $function$;
+
+REVOKE ALL ON FUNCTION public.admin_dismiss_corporate_action_detection(uuid, text) FROM PUBLIC;
 
 GRANT ALL ON FUNCTION public.admin_dismiss_corporate_action_detection(uuid, text) TO authenticated;
 
@@ -317,6 +348,8 @@ begin
 end;
 $function$;
 
+REVOKE ALL ON FUNCTION public.admin_promote_corporate_action_detection(uuid, text, date, numeric, text) FROM PUBLIC;
+
 GRANT ALL ON FUNCTION public.admin_promote_corporate_action_detection(uuid, text, date, numeric, text) TO authenticated;
 
 GRANT ALL ON FUNCTION public.admin_promote_corporate_action_detection(uuid, text, date, numeric, text) TO service_role;
@@ -442,6 +475,47 @@ GRANT ALL ON FUNCTION public.admin_top_token_users(integer) TO authenticated;
 
 GRANT ALL ON FUNCTION public.admin_top_token_users(integer) TO service_role;
 
+CREATE FUNCTION public.admin_trigger_signal_generation (
+  p_tier   text,
+  p_reason text DEFAULT 'manual trigger by admin'::text
+)
+  RETURNS jsonb
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path TO 'public'
+  AS $function$
+DECLARE
+  v_existing int;
+BEGIN
+  IF NOT is_current_user_admin() THEN
+    RAISE EXCEPTION 'unauthorized';
+  END IF;
+
+  IF p_tier NOT IN ('daily','swing') THEN
+    RAISE EXCEPTION 'tier tidak dikenal: %', p_tier;
+  END IF;
+
+  SELECT count(*) INTO v_existing FROM public.mtf_pipeline_runs WHERE tier = p_tier AND status = 'RUNNING';
+  IF v_existing > 0 THEN
+    RETURN jsonb_build_object('triggered', false, 'reason', 'pipeline tier ini masih RUNNING, tunggu selesai dulu');
+  END IF;
+
+  INSERT INTO audit_logs (id, actor_id, action, entity_type, entity_id, reason, detail, created_at)
+  VALUES (gen_random_uuid(), auth.uid(), 'MANUAL_SIGNAL_GENERATION', 'mtf_pipeline', NULL, p_reason,
+    jsonb_build_object('tier', p_tier), now());
+
+  PERFORM public.trigger_signal_pipeline_mtf(p_tier);
+
+  RETURN jsonb_build_object('triggered', true, 'tier', p_tier);
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION public.admin_trigger_signal_generation(text, text) FROM PUBLIC;
+
+GRANT ALL ON FUNCTION public.admin_trigger_signal_generation(text, text) TO authenticated;
+
+GRANT ALL ON FUNCTION public.admin_trigger_signal_generation(text, text) TO service_role;
+
 CREATE FUNCTION public.assert_signal_candles_fresh()
   RETURNS TRIGGER
   LANGUAGE plpgsql
@@ -452,6 +526,63 @@ CREATE FUNCTION public.assert_signal_candles_fresh()
 REVOKE ALL ON FUNCTION public.assert_signal_candles_fresh() FROM PUBLIC;
 
 GRANT ALL ON FUNCTION public.assert_signal_candles_fresh() TO service_role;
+
+CREATE FUNCTION public.auto_backup()
+  RETURNS void
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path TO 'public'
+  AS $function$
+BEGIN
+  -- Trigger backup via pg_dump schedule
+    -- Atau pakai Supabase CLI di local/Vercel cron
+      PERFORM net.http_post(
+          url := 'https://your-backup-endpoint.com/backup',
+              headers := '{"Content-Type": "application/json"}'::jsonb,
+                  body := '{"project": "izyanalisai"}'::jsonb
+                    );
+                    END;
+                    $function$;
+
+REVOKE ALL ON FUNCTION public.auto_backup() FROM PUBLIC;
+
+GRANT ALL ON FUNCTION public.auto_backup() TO service_role;
+
+CREATE FUNCTION public.binomial_sf (
+  k integer,
+  n integer,
+  p numeric DEFAULT 0.5
+)
+  RETURNS numeric
+  LANGUAGE plpgsql
+  IMMUTABLE
+  SET search_path TO 'public', 'pg_catalog'
+  AS $function$
+DECLARE
+  i integer;
+  log_p numeric := ln(p);
+  log_q numeric := ln(1 - p);
+  total numeric := 0;
+  log_term numeric;
+BEGIN
+  IF n IS NULL OR n <= 0 OR k IS NULL THEN RETURN NULL; END IF;
+  IF k <= 0 THEN RETURN 1; END IF;
+  IF k > n THEN RETURN 0; END IF;
+  FOR i IN k..n LOOP
+    log_term := public.log_binomial_coeff(n, i) + i * log_p + (n - i) * log_q;
+    total := total + exp(log_term);
+  END LOOP;
+  IF total > 1 THEN total := 1; END IF;
+  IF total < 0 THEN total := 0; END IF;
+  RETURN round(total, 6);
+END;
+$function$;
+
+COMMENT ON FUNCTION public.binomial_sf(integer,integer,numeric) IS 'P(X >= k) untuk X ~ Binomial(n, p). Dipakai sebagai one-tailed p-value test H0: win rate <= 0.5 vs H1: win rate > 0.5.';
+
+GRANT ALL ON FUNCTION public.binomial_sf(integer, integer, numeric) TO authenticated;
+
+GRANT ALL ON FUNCTION public.binomial_sf(integer, integer, numeric) TO service_role;
 
 CREATE FUNCTION public.calculate_trending_scores()
   RETURNS void
@@ -503,6 +634,86 @@ REVOKE ALL ON FUNCTION public.calculate_trending_scores() FROM PUBLIC;
 
 GRANT ALL ON FUNCTION public.calculate_trending_scores() TO service_role;
 
+CREATE FUNCTION public.cancel_subscription()
+  RETURNS jsonb
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path TO ''
+  AS $function$
+declare
+  v_uid uuid := auth.uid();
+  v_row public.subscriptions;
+begin
+  if v_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select * into v_row
+  from public.subscriptions
+  where user_id = v_uid and status = 'active'
+  order by created_at desc
+  limit 1;
+
+  if v_row.id is null then
+    -- Sudah tidak ada subscription aktif (mungkin sudah dibatalkan
+    -- sebelumnya, atau memang tidak pernah premium). Bukan error --
+    -- idempotent, biar retry dari frontend aman.
+    return jsonb_build_object('success', true, 'already_cancelled', true);
+  end if;
+
+  update public.subscriptions
+  set cancel_at_period_end = true, status = 'pending_cancel'
+  where id = v_row.id;
+
+  insert into public.audit_logs (actor_id, action, entity_type, entity_id, detail)
+  values (v_uid, 'SUBSCRIPTION_CANCEL_REQUESTED', 'subscriptions', v_row.id, jsonb_build_object('plan', v_row.plan));
+
+  return jsonb_build_object('success', true, 'already_cancelled', false, 'period_end', v_row.period_end);
+end;
+$function$;
+
+REVOKE ALL ON FUNCTION public.cancel_subscription() FROM PUBLIC;
+
+GRANT ALL ON FUNCTION public.cancel_subscription() TO authenticated;
+
+GRANT ALL ON FUNCTION public.cancel_subscription() TO service_role;
+
+CREATE FUNCTION public.check_rate_limit (
+  p_scope          text,
+  p_identity       text,
+  p_max_hits       integer,
+  p_window_seconds integer DEFAULT 60
+)
+  RETURNS boolean
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path TO 'public'
+  AS $function$
+DECLARE
+  v_window_start timestamptz;
+  v_key text;
+  v_count integer;
+BEGIN
+  -- window dibulatkan ke bawah per p_window_seconds (fixed window)
+  v_window_start := to_timestamp(floor(extract(epoch FROM now()) / p_window_seconds) * p_window_seconds);
+  v_key := p_scope || ':' || coalesce(p_identity, 'anon');
+
+  INSERT INTO public.rate_limit_hits (bucket_key, window_start, hit_count)
+  VALUES (v_key, v_window_start, 1)
+  ON CONFLICT (bucket_key, window_start)
+  DO UPDATE SET hit_count = rate_limit_hits.hit_count + 1
+  RETURNING hit_count INTO v_count;
+
+  RETURN v_count <= p_max_hits;
+END;
+$function$;
+
+COMMENT ON FUNCTION public.check_rate_limit(text,text,integer,integer) IS 'Return true kalau masih di bawah limit (boleh lanjut), false kalau sudah kelebihan. Dipanggil di awal RPC publik yang rawan abuse.';
+
+GRANT ALL ON FUNCTION public.check_rate_limit(text, text, integer, integer) TO authenticated;
+
+GRANT ALL ON FUNCTION public.check_rate_limit(text, text, integer, integer) TO service_role;
+
 CREATE FUNCTION public.classify_corporate_action_text (
   p_text text
 )
@@ -527,6 +738,154 @@ $function$;
 GRANT ALL ON FUNCTION public.classify_corporate_action_text(text) TO authenticated;
 
 GRANT ALL ON FUNCTION public.classify_corporate_action_text(text) TO service_role;
+
+CREATE FUNCTION public.cleanup_rate_limit_hits()
+  RETURNS void
+  LANGUAGE sql
+  SECURITY DEFINER
+  SET search_path TO 'public'
+  AS $function$
+  DELETE FROM public.rate_limit_hits WHERE window_start < now() - interval '1 day';
+$function$;
+
+REVOKE ALL ON FUNCTION public.cleanup_rate_limit_hits() FROM PUBLIC;
+
+GRANT ALL ON FUNCTION public.cleanup_rate_limit_hits() TO service_role;
+
+CREATE FUNCTION public.compute_fear_greed_index()
+  RETURNS void
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path TO 'public'
+  AS $function$
+DECLARE
+  v_trade_date date;
+  v_close numeric;
+  v_ma125 numeric;
+  v_atr_pct numeric;
+  v_momentum_score numeric;
+  v_breadth_score numeric;
+  v_volatility_score numeric;
+  v_composite numeric;
+  v_label text;
+  v_adv int;
+  v_dec int;
+  v_unch int;
+BEGIN
+  -- Trade date terbaru yang ada di index_history (IHSG)
+  SELECT max(trade_date) INTO v_trade_date FROM public.index_history WHERE ticker = '^JKSE';
+  IF v_trade_date IS NULL THEN
+    INSERT INTO public.job_runs (job_name, status, finished_at, error)
+    VALUES ('compute-fear-greed-index', 'FAILED', now(), 'index_history kosong untuk ^JKSE');
+    RETURN;
+  END IF;
+
+  -- 1) Momentum: close hari ini vs MA125 (125 hari kalender terakhir yang ada datanya)
+  SELECT close INTO v_close FROM public.index_history
+  WHERE ticker = '^JKSE' AND trade_date = v_trade_date;
+
+  SELECT avg(close) INTO v_ma125 FROM (
+    SELECT close FROM public.index_history
+    WHERE ticker = '^JKSE' AND trade_date <= v_trade_date
+    ORDER BY trade_date DESC LIMIT 125
+  ) sub;
+
+  IF v_ma125 IS NULL OR v_ma125 = 0 THEN
+    v_momentum_score := 50;
+  ELSE
+    -- deviasi % dari MA125, dipetakan ke 0-100: +10% -> 100, -10% -> 0
+    v_momentum_score := LEAST(100, GREATEST(0,
+      50 + ((v_close - v_ma125) / v_ma125 * 100) * 5
+    ));
+  END IF;
+
+  -- 2) Breadth: advance/decline/unchanged dari quotes (harga terkini vs previous_close)
+  SELECT
+    count(*) FILTER (WHERE price > previous_close),
+    count(*) FILTER (WHERE price < previous_close),
+    count(*) FILTER (WHERE price = previous_close)
+  INTO v_adv, v_dec, v_unch
+  FROM public.quotes
+  WHERE previous_close IS NOT NULL AND price IS NOT NULL;
+
+  IF (v_adv + v_dec + v_unch) = 0 THEN
+    v_breadth_score := 50;
+  ELSE
+    v_breadth_score := LEAST(100, GREATEST(0,
+      50 + ((v_adv - v_dec)::numeric / (v_adv + v_dec + v_unch)) * 50
+    ));
+  END IF;
+
+  -- 3) Volatility: ATR% 14 hari IHSG (True Range harian rata-rata / close), diinversi
+  WITH tr_calc AS (
+    SELECT
+      trade_date,
+      close,
+      GREATEST(
+        high - low,
+        abs(high - lag(close) OVER (ORDER BY trade_date)),
+        abs(low - lag(close) OVER (ORDER BY trade_date))
+      ) AS tr
+    FROM public.index_history
+    WHERE ticker = '^JKSE' AND trade_date <= v_trade_date
+    ORDER BY trade_date DESC
+    LIMIT 15
+  )
+  SELECT avg(tr) / nullif(max(close) FILTER (WHERE trade_date = v_trade_date), 0) * 100
+  INTO v_atr_pct
+  FROM tr_calc
+  WHERE tr IS NOT NULL;
+
+  IF v_atr_pct IS NULL THEN
+    v_volatility_score := 50;
+  ELSE
+    -- ATR% 0.5 (tenang) -> skor 100 (greed), ATR% 3.0 (liar) -> skor 0 (fear)
+    v_volatility_score := LEAST(100, GREATEST(0,
+      100 - ((v_atr_pct - 0.5) / (3.0 - 0.5)) * 100
+    ));
+  END IF;
+
+  v_composite := round((v_momentum_score + v_breadth_score + v_volatility_score) / 3, 2);
+
+  v_label := CASE
+    WHEN v_composite < 25 THEN 'EXTREME_FEAR'
+    WHEN v_composite < 45 THEN 'FEAR'
+    WHEN v_composite < 55 THEN 'NEUTRAL'
+    WHEN v_composite < 75 THEN 'GREED'
+    ELSE 'EXTREME_GREED'
+  END;
+
+  INSERT INTO public.fear_greed_index (
+    trade_date, momentum_score, breadth_score, volatility_score, composite_score, label,
+    advancing_count, declining_count, unchanged_count, ihsg_close, ihsg_ma125, atr_pct, updated_at
+  ) VALUES (
+    v_trade_date, round(v_momentum_score,2), round(v_breadth_score,2), round(v_volatility_score,2), v_composite, v_label,
+    v_adv, v_dec, v_unch, v_close, round(v_ma125,2), round(v_atr_pct,4), now()
+  )
+  ON CONFLICT (trade_date) DO UPDATE SET
+    momentum_score = excluded.momentum_score,
+    breadth_score = excluded.breadth_score,
+    volatility_score = excluded.volatility_score,
+    composite_score = excluded.composite_score,
+    label = excluded.label,
+    advancing_count = excluded.advancing_count,
+    declining_count = excluded.declining_count,
+    unchanged_count = excluded.unchanged_count,
+    ihsg_close = excluded.ihsg_close,
+    ihsg_ma125 = excluded.ihsg_ma125,
+    atr_pct = excluded.atr_pct,
+    updated_at = now();
+
+  INSERT INTO public.job_runs (job_name, status, finished_at)
+  VALUES ('compute-fear-greed-index', 'SUCCESS', now());
+END;
+$function$;
+
+COMMENT ON FUNCTION public.compute_fear_greed_index() IS 'Fear & Greed Index Indonesia (spec v15.1/v6.1 section 5.3): momentum IHSG vs MA125 + breadth advance/decline dari quotes + ATR% 14 hari (diinversi). Dipanggil harian via cron fear-greed-index-daily.';
+
+REVOKE ALL ON FUNCTION public.compute_fear_greed_index() FROM PUBLIC;
+
+GRANT ALL ON FUNCTION public.compute_fear_greed_index() TO service_role;
 
 CREATE FUNCTION public.compute_sector_rotation()
   RETURNS void
@@ -717,6 +1076,10 @@ BEGIN
   END IF;
   IF p_type IS NULL OR p_type = '' THEN
     RAISE EXCEPTION 'INVALID_TYPE';
+  END IF;
+
+  IF NOT public.check_rate_limit('deduct_token', v_user_id::text, 20, 60) THEN
+    RAISE EXCEPTION 'RATE_LIMITED: terlalu banyak percobaan, coba lagi sebentar' USING ERRCODE = '42901';
   END IF;
 
   -- Admin/founder bypass: unlimited token, no deduction, no ledger entry
@@ -1233,7 +1596,7 @@ CREATE FUNCTION public.expire_active_subscriptions()
 BEGIN
   UPDATE public.subscriptions
     SET status = 'expired'
-    WHERE status = 'active'
+    WHERE status IN ('active', 'pending_cancel')
       AND period_end IS NOT NULL
       AND period_end < now();
 
@@ -1245,10 +1608,14 @@ BEGIN
       AND p.is_premium = true
       AND NOT EXISTS (
         SELECT 1 FROM public.subscriptions s2
-        WHERE s2.user_id = p.id AND s2.status IN ('active', 'grace')
+        WHERE s2.user_id = p.id AND s2.status IN ('active', 'grace', 'pending_cancel')
       );
 END;
 $function$;
+
+COMMENT ON FUNCTION public.expire_active_subscriptions() IS 'Expire subscription yang period_end sudah lewat, baik masih active maupun sudah pending_cancel (fix 23 Agustus 2026 -- sebelumnya pending_cancel tidak pernah tertangkap sama sekali sehingga cancel_subscription() tidak benar-benar berefek saat period_end tercapai).';
+
+REVOKE ALL ON FUNCTION public.expire_active_subscriptions() FROM PUBLIC;
 
 GRANT ALL ON FUNCTION public.expire_active_subscriptions() TO service_role;
 
@@ -1278,16 +1645,77 @@ REVOKE ALL ON FUNCTION public.expire_grace_subscriptions() FROM PUBLIC;
 
 GRANT ALL ON FUNCTION public.expire_grace_subscriptions() TO service_role;
 
+CREATE FUNCTION public.fix_signal_expiry_on_insert()
+  RETURNS TRIGGER
+  LANGUAGE plpgsql
+  SET search_path TO 'public'
+  AS $function$
+DECLARE
+  v_correct_expiry timestamptz;
+BEGIN
+  -- Hanya fix kalau expires_at di-set ke hari yang sama dengan created_at (bug lama)
+  -- atau kalau expires_at < NOW() + 12 jam (terlalu cepat expire)
+  IF NEW.expires_at IS NULL OR NEW.expires_at < NOW() + INTERVAL '12 hours' THEN
+    v_correct_expiry := get_next_signal_expiry(NOW(), COALESCE(NEW.timeframe, 'daily'));
+    NEW.expires_at := v_correct_expiry;
+    RAISE LOG 'fix_signal_expiry_on_insert: override expires_at untuk signal % dari % ke %',
+      NEW.id, OLD.expires_at, v_correct_expiry;
+  END IF;
+  RETURN NEW;
+END;
+$function$;
+
+GRANT ALL ON FUNCTION public.fix_signal_expiry_on_insert() TO authenticated;
+
+GRANT ALL ON FUNCTION public.fix_signal_expiry_on_insert() TO service_role;
+
+CREATE FUNCTION public.generate_telegram_link_code()
+  RETURNS text
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path TO 'public'
+  AS $function$
+DECLARE
+  v_code text;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'unauthorized';
+  END IF;
+
+  -- hapus kode lama milik user ini yang belum dipakai, biar gak numpuk
+  DELETE FROM public.telegram_link_codes WHERE user_id = auth.uid() AND used_at IS NULL;
+
+  v_code := lpad(floor(random() * 1000000)::text, 6, '0');
+
+  INSERT INTO public.telegram_link_codes (code, user_id)
+  VALUES (v_code, auth.uid());
+
+  RETURN v_code;
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION public.generate_telegram_link_code() FROM PUBLIC;
+
+GRANT ALL ON FUNCTION public.generate_telegram_link_code() TO authenticated;
+
+GRANT ALL ON FUNCTION public.generate_telegram_link_code() TO service_role;
+
 CREATE FUNCTION public.get_active_signal_map()
   RETURNS TABLE (
     stock_id    uuid,
     direction   text,
     signal_tier text
   )
-  LANGUAGE sql
+  LANGUAGE plpgsql
   SECURITY DEFINER
   SET search_path TO 'public'
   AS $function$
+BEGIN
+  IF NOT public.check_rate_limit('get_active_signal_map', public.rate_limit_identity(), 60, 60) THEN
+    RAISE EXCEPTION 'RATE_LIMITED: terlalu banyak request, coba lagi sebentar' USING ERRCODE = '42901';
+  END IF;
+
+  RETURN QUERY
   SELECT DISTINCT ON (s.stock_id)
     s.stock_id,
     s.direction,
@@ -1295,7 +1723,9 @@ CREATE FUNCTION public.get_active_signal_map()
   FROM public.signals s
   WHERE s.status IN ('ACTIVE', 'HIT_TP1')
     AND s.superseded_by IS NULL
+    AND public.is_level_mode_gate_passed(s.level_mode)
   ORDER BY s.stock_id, s.created_at DESC;
+END;
 $function$;
 
 GRANT ALL ON FUNCTION public.get_active_signal_map() TO anon;
@@ -1368,10 +1798,16 @@ CREATE FUNCTION public.get_full_signal_map (
     signal_tier text,
     state       text
   )
-  LANGUAGE sql
+  LANGUAGE plpgsql
   SECURITY DEFINER
   SET search_path TO 'public'
   AS $function$
+BEGIN
+  IF NOT public.check_rate_limit('get_full_signal_map', public.rate_limit_identity(), 60, 60) THEN
+    RAISE EXCEPTION 'RATE_LIMITED: terlalu banyak request, coba lagi sebentar' USING ERRCODE = '42901';
+  END IF;
+
+  RETURN QUERY
   SELECT * FROM (
     SELECT DISTINCT ON (s.stock_id)
       s.stock_id,
@@ -1382,6 +1818,7 @@ CREATE FUNCTION public.get_full_signal_map (
     WHERE s.status IN ('ACTIVE', 'HIT_TP1')
       AND s.superseded_by IS NULL
       AND s.signal_tier = p_tier
+      AND public.is_level_mode_gate_passed(s.level_mode)
     ORDER BY s.stock_id, s.created_at DESC
   ) active_signals
 
@@ -1400,7 +1837,9 @@ CREATE FUNCTION public.get_full_signal_map (
         AND s2.status IN ('ACTIVE', 'HIT_TP1')
         AND s2.superseded_by IS NULL
         AND s2.signal_tier = p_tier
-    )
+        AND public.is_level_mode_gate_passed(s2.level_mode)
+    );
+END;
 $function$;
 
 GRANT ALL ON FUNCTION public.get_full_signal_map(text) TO anon;
@@ -1408,6 +1847,64 @@ GRANT ALL ON FUNCTION public.get_full_signal_map(text) TO anon;
 GRANT ALL ON FUNCTION public.get_full_signal_map(text) TO authenticated;
 
 GRANT ALL ON FUNCTION public.get_full_signal_map(text) TO service_role;
+
+CREATE FUNCTION public.get_next_signal_expiry (
+  from_ts timestamp with time zone DEFAULT now(),
+  tier    text                     DEFAULT 'daily'::text
+)
+  RETURNS timestamp WITH time zone
+  LANGUAGE plpgsql
+  STABLE
+  SET search_path TO 'public'
+  AS $function$
+DECLARE
+  v_wib_now      date;
+  v_next_date    date;
+  v_session_close time;
+  v_expiry       timestamptz;
+  v_days_to_skip int;
+BEGIN
+  -- Konversi ke WIB (UTC+7) untuk cek tanggal hari ini
+  v_wib_now := (from_ts AT TIME ZONE 'Asia/Jakarta')::date;
+
+  -- Swing: skip 1 trading day extra (jadi minimal 2 hari trading ke depan)
+  v_days_to_skip := CASE WHEN tier = 'swing' THEN 1 ELSE 0 END;
+
+  -- Cari next trading day setelah hari ini (skip hari ini karena signal dibuat after market)
+  SELECT date, session_close
+  INTO v_next_date, v_session_close
+  FROM market_calendar
+  WHERE date > v_wib_now
+    AND is_trading_day = true
+  ORDER BY date
+  LIMIT 1
+  OFFSET v_days_to_skip;
+
+  -- Fallback: kalau market_calendar kosong / tidak ada data, pakai +1 hari 15:50 WIB
+  IF v_next_date IS NULL THEN
+    v_next_date    := v_wib_now + 1;
+    v_session_close := '15:50:00'::time;
+  END IF;
+
+  -- Kalau session_close NULL (harusnya tidak karena is_trading_day=true), fallback 15:50
+  IF v_session_close IS NULL THEN
+    v_session_close := '15:50:00'::time;
+  END IF;
+
+  -- Gabungkan tanggal + waktu, interpret sebagai WIB, konversi ke UTC timestamptz
+  v_expiry := (v_next_date || ' ' || v_session_close)::timestamp AT TIME ZONE 'Asia/Jakarta';
+
+  RETURN v_expiry;
+END;
+$function$;
+
+COMMENT ON FUNCTION public.get_next_signal_expiry(timestamp with time zone,text) IS 'Hitung expires_at signal berdasarkan market_calendar. 
+   Selalu menunjuk ke session_close next trading day (atau +1 hari lagi untuk swing).
+   Dipanggil dari generate-signals-mtf dan sebagai safety net trigger.';
+
+GRANT ALL ON FUNCTION public.get_next_signal_expiry(timestamp WITH time zone, text) TO authenticated;
+
+GRANT ALL ON FUNCTION public.get_next_signal_expiry(timestamp WITH time zone, text) TO service_role;
 
 CREATE FUNCTION public.get_next_trading_day (
   from_date          date,
@@ -1455,9 +1952,14 @@ DECLARE
   v_unlocked   boolean := false;
   v_result     jsonb;
 BEGIN
+  IF NOT public.check_rate_limit('get_signal_for_stock', public.rate_limit_identity(), 120, 60) THEN
+    RAISE EXCEPTION 'RATE_LIMITED: terlalu banyak request, coba lagi sebentar' USING ERRCODE = '42901';
+  END IF;
+
   SELECT * INTO v_signal FROM public.signals
     WHERE stock_id = p_stock_id AND status IN ('ACTIVE', 'HIT_TP1') AND superseded_by IS NULL
       AND signal_tier = p_tier
+      AND public.is_level_mode_gate_passed(level_mode)
     ORDER BY created_at DESC
     LIMIT 1;
 
@@ -1542,6 +2044,10 @@ declare
   v_is_premium boolean := false;
   v_result jsonb;
 begin
+  if not public.check_rate_limit('get_signal_history', public.rate_limit_identity(), 60, 60) then
+    raise exception 'RATE_LIMITED: terlalu banyak request, coba lagi sebentar' using errcode = '42901';
+  end if;
+
   if v_user is not null then
     select coalesce(is_premium, false) into v_is_premium from public.profiles where id = v_user;
   end if;
@@ -1556,12 +2062,10 @@ begin
           and su.unlock_date between (sg.created_at at time zone 'Asia/Jakarta')::date
                                   and coalesce((sg.resolved_at at time zone 'Asia/Jakarta')::date, (now() at time zone 'Asia/Jakarta')::date)
       )) then true else false end as unlocked,
-      case when v_is_premium or (v_user is not null and exists (
-        select 1 from public.signal_unlocks su
-        where su.user_id = v_user and su.stock_id = sg.stock_id
-          and su.unlock_date between (sg.created_at at time zone 'Asia/Jakarta')::date
-                                  and coalesce((sg.resolved_at at time zone 'Asia/Jakarta')::date, (now() at time zone 'Asia/Jakarta')::date)
-      )) then sg.entry_price else null end as entry_price,
+      sg.entry_price,
+      sg.buy_area_low,
+      sg.buy_area_high,
+      sg.downside_support_1,
       case when v_is_premium or (v_user is not null and exists (
         select 1 from public.signal_unlocks su
         where su.user_id = v_user and su.stock_id = sg.stock_id
@@ -1579,7 +2083,25 @@ begin
         where su.user_id = v_user and su.stock_id = sg.stock_id
           and su.unlock_date between (sg.created_at at time zone 'Asia/Jakarta')::date
                                   and coalesce((sg.resolved_at at time zone 'Asia/Jakarta')::date, (now() at time zone 'Asia/Jakarta')::date)
-      )) then sg.stop_loss else null end as stop_loss
+      )) then sg.stop_loss else null end as stop_loss,
+      case when v_is_premium or (v_user is not null and exists (
+        select 1 from public.signal_unlocks su
+        where su.user_id = v_user and su.stock_id = sg.stock_id
+          and su.unlock_date between (sg.created_at at time zone 'Asia/Jakarta')::date
+                                  and coalesce((sg.resolved_at at time zone 'Asia/Jakarta')::date, (now() at time zone 'Asia/Jakarta')::date)
+      )) then sg.bearish_trigger else null end as bearish_trigger,
+      case when v_is_premium or (v_user is not null and exists (
+        select 1 from public.signal_unlocks su
+        where su.user_id = v_user and su.stock_id = sg.stock_id
+          and su.unlock_date between (sg.created_at at time zone 'Asia/Jakarta')::date
+                                  and coalesce((sg.resolved_at at time zone 'Asia/Jakarta')::date, (now() at time zone 'Asia/Jakarta')::date)
+      )) then sg.invalidation else null end as invalidation,
+      case when v_is_premium or (v_user is not null and exists (
+        select 1 from public.signal_unlocks su
+        where su.user_id = v_user and su.stock_id = sg.stock_id
+          and su.unlock_date between (sg.created_at at time zone 'Asia/Jakarta')::date
+                                  and coalesce((sg.resolved_at at time zone 'Asia/Jakarta')::date, (now() at time zone 'Asia/Jakarta')::date)
+      )) then sg.downside_support_2 else null end as downside_support_2
     from public.signals sg
     join public.stocks st on st.id = sg.stock_id
     left join public.signal_results sr on sr.signal_id = sg.id
@@ -1601,71 +2123,55 @@ GRANT ALL ON FUNCTION public.get_signal_history(text, text, integer, integer, in
 
 GRANT ALL ON FUNCTION public.get_signal_history(text, text, integer, integer, integer) TO service_role;
 
-CREATE FUNCTION public.get_signal_history (
-  p_status text    DEFAULT NULL::text,
-  p_tier   text    DEFAULT NULL::text,
-  p_days   integer DEFAULT 30
-)
+CREATE FUNCTION public.get_stock_status_map()
   RETURNS TABLE (
-    id                 uuid,
-    direction          text,
-    status             text,
-    signal_tier        text,
-    triggered_at       timestamp with time zone,
-    expires_at         timestamp with time zone,
-    resolved_at        timestamp with time zone,
-    ticker             text,
-    name               text,
-    timeframe          text,
-    entry_price        numeric,
-    buy_area_low       numeric,
-    buy_area_high      numeric,
-    tp1                numeric,
-    tp2                numeric,
-    stop_loss          numeric,
-    bearish_trigger    text,
-    downside_support_1 numeric,
-    result             text
+    stock_id    uuid,
+    signal_tier text,
+    status      text
   )
   LANGUAGE plpgsql
   SECURITY DEFINER
   SET search_path TO 'public'
   AS $function$
-DECLARE
-  v_user uuid := auth.uid();
 BEGIN
+  IF NOT public.check_rate_limit('get_stock_status_map', public.rate_limit_identity(), 120, 60) THEN
+    RAISE EXCEPTION 'RATE_LIMITED: terlalu banyak request, coba lagi sebentar' USING ERRCODE = '42901';
+  END IF;
+
   RETURN QUERY
-  SELECT
-    s.id, s.direction, s.status, s.signal_tier,
-    s.triggered_at, s.expires_at, s.resolved_at,
-    st.ticker, st.name, s.signal_tier AS timeframe,
-    s.entry_price, s.buy_area_low, s.buy_area_high,
-    s.tp1, s.tp2, s.stop_loss,
-    s.bearish_trigger, s.downside_support_1,
-    CASE
-      WHEN s.status = 'HIT_TP2' THEN 'TP2 ✓'
-      WHEN s.status = 'HIT_TP1' THEN 'TP1 ✓'
-      WHEN s.status = 'HIT_SL'  THEN 'SL ✗'
-      WHEN s.status = 'INVALIDATED' THEN 'Invalidated'
-      WHEN s.status = 'EXPIRED' THEN 'Expired'
-      WHEN s.status = 'ACTIVE' THEN 'Aktif'
-      ELSE s.status
-    END AS result
-  FROM public.signals s
-  JOIN public.stocks st ON st.id = s.stock_id
-  WHERE
-    s.triggered_at >= now() - (p_days || ' days')::interval
-    AND (p_status IS NULL OR s.status = p_status)
-    AND (p_tier IS NULL OR s.signal_tier = p_tier)
-    AND s.superseded_by IS NULL
-  ORDER BY s.triggered_at DESC
-  LIMIT 200;
+  WITH active_signal AS (
+    SELECT DISTINCT ON (s.stock_id, s.signal_tier)
+      s.stock_id,
+      s.signal_tier,
+      s.direction AS status
+    FROM public.signals s
+    WHERE s.status IN ('ACTIVE', 'HIT_TP1')
+      AND s.superseded_by IS NULL
+      AND public.is_level_mode_gate_passed(s.level_mode)
+    ORDER BY s.stock_id, s.signal_tier, s.created_at DESC
+  ),
+  netral AS (
+    SELECT
+      w.stock_id,
+      w.signal_tier,
+      'NETRAL'::text AS status
+    FROM public.signal_watch_states w
+    WHERE NOT EXISTS (
+      SELECT 1 FROM active_signal a
+      WHERE a.stock_id = w.stock_id AND a.signal_tier = w.signal_tier
+    )
+  )
+  SELECT * FROM active_signal
+  UNION ALL
+  SELECT * FROM netral;
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.get_signal_history(text, text, integer) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.get_stock_status_map() TO anon;
 
-GRANT ALL ON FUNCTION public.get_signal_history(text, text, integer) TO service_role;
+GRANT ALL ON FUNCTION public.get_stock_status_map() TO authenticated;
+
+GRANT ALL ON FUNCTION public.get_stock_status_map() TO service_role;
 
 CREATE FUNCTION public.get_watch_state_for_stock (
   p_stock_id uuid,
@@ -1681,6 +2187,10 @@ DECLARE
   v_indicator public.indicators;
   v_result jsonb;
 BEGIN
+  IF NOT public.check_rate_limit('get_watch_state_for_stock', public.rate_limit_identity(), 120, 60) THEN
+    RAISE EXCEPTION 'RATE_LIMITED: terlalu banyak request, coba lagi sebentar' USING ERRCODE = '42901';
+  END IF;
+
   SELECT * INTO v_watch
   FROM public.signal_watch_states
   WHERE stock_id = p_stock_id AND signal_tier = p_tier
@@ -1734,13 +2244,21 @@ CREATE FUNCTION public.handle_new_user()
   SECURITY DEFINER
   SET search_path TO 'public'
   AS $function$
+declare
+  v_wallet_id uuid;
 begin
   insert into public.profiles (id, full_name, created_at)
     values (new.id, new.raw_user_meta_data->>'full_name', now());
 
   insert into public.token_wallets (user_id, balance, last_reset_date)
     values (new.id, 5, (now() at time zone 'Asia/Jakarta')::date)
-    on conflict (user_id) do nothing;
+    on conflict (user_id) do nothing
+    returning id into v_wallet_id;
+
+  if v_wallet_id is not null then
+    insert into public.token_transactions (wallet_id, amount, type, balance_before, balance_after)
+      values (v_wallet_id, 5, 'DAILY_GRANT', 0, 5);
+  end if;
 
   insert into public.notification_preferences (
     user_id, master_enabled, market_alerts, signal_alerts,
@@ -1757,6 +2275,8 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW
   EXECUTE FUNCTION public.handle_new_user();
+
+COMMENT ON FUNCTION public.handle_new_user() IS 'Trigger on_auth_user_created: bikin profiles + token_wallets (grant awal 5 token, DICATAT ke token_transactions sejak fix 25 Agustus 2026) + notification_preferences untuk user baru.';
 
 REVOKE ALL ON FUNCTION public.handle_new_user() FROM PUBLIC;
 
@@ -1777,6 +2297,31 @@ REVOKE ALL ON FUNCTION public.is_current_user_admin() FROM PUBLIC;
 GRANT ALL ON FUNCTION public.is_current_user_admin() TO authenticated;
 
 GRANT ALL ON FUNCTION public.is_current_user_admin() TO service_role;
+
+CREATE FUNCTION public.is_level_mode_gate_passed (
+  p_level_mode text
+)
+  RETURNS boolean
+  LANGUAGE sql
+  STABLE
+  SECURITY DEFINER
+  SET search_path TO 'public'
+  AS $function$
+  SELECT COALESCE(
+    (SELECT gate_passed FROM public.backtest_runs
+     WHERE level_mode = p_level_mode
+     ORDER BY created_at DESC LIMIT 1),
+    false
+  );
+$function$;
+
+REVOKE ALL ON FUNCTION public.is_level_mode_gate_passed(text) FROM PUBLIC;
+
+GRANT ALL ON FUNCTION public.is_level_mode_gate_passed(text) TO anon;
+
+GRANT ALL ON FUNCTION public.is_level_mode_gate_passed(text) TO authenticated;
+
+GRANT ALL ON FUNCTION public.is_level_mode_gate_passed(text) TO service_role;
 
 CREATE FUNCTION public.is_trading_day (
   check_date date
@@ -1871,7 +2416,8 @@ CREATE FUNCTION public.list_active_signals (
     tp2                numeric,
     stop_loss          numeric,
     current_price      numeric,
-    unlocked           boolean
+    unlocked           boolean,
+    is_stale           boolean
   )
   LANGUAGE plpgsql
   SECURITY DEFINER
@@ -1881,26 +2427,32 @@ DECLARE
   v_user uuid := auth.uid();
   v_today date := (now() at time zone 'Asia/Jakarta')::date;
   v_is_premium boolean := false;
+  v_active_count int;
 BEGIN
+  IF NOT public.check_rate_limit('list_active_signals', public.rate_limit_identity(), 120, 60) THEN
+    RAISE EXCEPTION 'RATE_LIMITED: terlalu banyak request, coba lagi sebentar' USING ERRCODE = '42901';
+  END IF;
+
   IF v_user IS NOT NULL THEN
     SELECT COALESCE(p.is_premium, false) INTO v_is_premium
     FROM public.profiles p WHERE p.id = v_user;
   END IF;
 
+  SELECT count(*) INTO v_active_count
+  FROM public.signals s
+  WHERE s.status IN ('ACTIVE', 'HIT_TP1')
+    AND s.superseded_by IS NULL
+    AND (p_tier IS NULL OR s.signal_tier = p_tier)
+    AND public.is_level_mode_gate_passed(s.level_mode);
+
   RETURN QUERY
   SELECT
     s.id, s.direction, s.status, s.signal_tier, s.created_at,
     st.id AS stock_id, st.ticker, st.name,
-    s.entry_price,
-    s.buy_area_low,
-    s.buy_area_high,
-    s.support_level,
-    s.resistance_level,
-    s.bearish_type,
-    s.bearish_trigger,
-    s.invalidation,
-    s.downside_support_1,
-    s.downside_support_2,
+    s.entry_price, s.buy_area_low, s.buy_area_high,
+    s.support_level, s.resistance_level,
+    s.bearish_type, s.bearish_trigger, s.invalidation,
+    s.downside_support_1, s.downside_support_2,
     CASE WHEN (v_is_premium OR EXISTS (
       SELECT 1 FROM public.signal_unlocks su
       WHERE su.user_id = v_user AND su.stock_id = st.id AND su.unlock_date = v_today
@@ -1917,14 +2469,19 @@ BEGIN
     (v_is_premium OR EXISTS (
       SELECT 1 FROM public.signal_unlocks su
       WHERE su.user_id = v_user AND su.stock_id = st.id AND su.unlock_date = v_today
-    )) AS unlocked
+    )) AS unlocked,
+    (v_active_count = 0) AS is_stale
   FROM public.signals s
   JOIN public.stocks st ON st.id = s.stock_id
   LEFT JOIN public.quotes q ON q.stock_id = st.id
-  WHERE s.status IN ('ACTIVE', 'HIT_TP1')
-    AND s.superseded_by IS NULL
+  WHERE s.superseded_by IS NULL
     AND (p_tier IS NULL OR s.signal_tier = p_tier)
-  ORDER BY s.created_at DESC;
+    AND (
+      (v_active_count > 0 AND s.status IN ('ACTIVE', 'HIT_TP1') AND public.is_level_mode_gate_passed(s.level_mode))
+      OR (v_active_count = 0)
+    )
+  ORDER BY s.created_at DESC
+  LIMIT CASE WHEN v_active_count = 0 THEN 15 ELSE 200 END;
 END;
 $function$;
 
@@ -1933,6 +2490,36 @@ GRANT ALL ON FUNCTION public.list_active_signals(text) TO anon;
 GRANT ALL ON FUNCTION public.list_active_signals(text) TO authenticated;
 
 GRANT ALL ON FUNCTION public.list_active_signals(text) TO service_role;
+
+CREATE FUNCTION public.log_binomial_coeff (
+  n integer,
+  k integer
+)
+  RETURNS numeric
+  LANGUAGE plpgsql
+  IMMUTABLE
+  SET search_path TO 'public', 'pg_catalog'
+  AS $function$
+DECLARE
+  kk integer := k;
+  j integer;
+  log_c numeric := 0;
+BEGIN
+  IF n IS NULL OR k IS NULL OR kk < 0 OR kk > n THEN RETURN NULL; END IF;
+  IF kk = 0 OR kk = n THEN RETURN 0; END IF;
+  IF kk > n - kk THEN kk := n - kk; END IF;
+  FOR j IN 1..kk LOOP
+    log_c := log_c + ln((n - kk + j)::numeric) - ln(j::numeric);
+  END LOOP;
+  RETURN log_c;
+END;
+$function$;
+
+COMMENT ON FUNCTION public.log_binomial_coeff(integer,integer) IS 'log(C(n,k)) dihitung via penjumlahan log, bukan factorial langsung, biar aman untuk n besar.';
+
+GRANT ALL ON FUNCTION public.log_binomial_coeff(integer, integer) TO authenticated;
+
+GRANT ALL ON FUNCTION public.log_binomial_coeff(integer, integer) TO service_role;
 
 CREATE FUNCTION public.mtf_pipeline_poll()
   RETURNS void
@@ -2066,7 +2653,7 @@ CREATE FUNCTION public.notify_push_on_new_notification()
   RETURNS TRIGGER
   LANGUAGE plpgsql
   SECURITY DEFINER
-  SET search_path TO '', 'extensions'
+  SET search_path TO 'public'
   AS $function$
 DECLARE
   v_pref record;
@@ -2091,10 +2678,6 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM public.push_subscriptions WHERE user_id = NEW.user_id) THEN
-    RETURN NEW;
-  END IF;
-
   SELECT decrypted_secret INTO v_url FROM vault.decrypted_secrets WHERE name = 'project_url';
   SELECT decrypted_secret INTO v_key FROM vault.decrypted_secrets WHERE name = 'service_role_key';
   SELECT value INTO v_secret FROM public.internal_secrets WHERE key = 'worker_shared_secret';
@@ -2102,22 +2685,31 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  SELECT net.http_post(
-    url := v_url || '/functions/v1/send-web-push',
-    headers := jsonb_build_object('Authorization','Bearer ' || v_key,'Content-Type','application/json','x-worker-secret', v_secret),
-    body := jsonb_build_object(
-      'user_id', NEW.user_id,
-      'title', NEW.title,
-      'body', NEW.body,
-      'category', NEW.category,
-      'reference_id', NEW.reference_id
-    ),
-    timeout_milliseconds := 15000
-  ) INTO v_req_id;
+  -- Web Push (kalau user punya subscription browser)
+  IF EXISTS (SELECT 1 FROM public.push_subscriptions WHERE user_id = NEW.user_id) THEN
+    SELECT net.http_post(
+      url := v_url || '/functions/v1/send-web-push',
+      headers := jsonb_build_object('Authorization','Bearer ' || v_key,'Content-Type','application/json','x-worker-secret', v_secret),
+      body := jsonb_build_object('user_id', NEW.user_id,'title', NEW.title,'body', NEW.body,'category', NEW.category,'reference_id', NEW.reference_id),
+      timeout_milliseconds := 15000
+    ) INTO v_req_id;
+  END IF;
+
+  -- Telegram (spec v5.0 section 19, kalau user punya chat_id aktif)
+  IF EXISTS (SELECT 1 FROM public.telegram_subscriptions WHERE user_id = NEW.user_id AND is_active = true) THEN
+    SELECT net.http_post(
+      url := v_url || '/functions/v1/send-telegram-notification',
+      headers := jsonb_build_object('Authorization','Bearer ' || v_key,'Content-Type','application/json','x-worker-secret', v_secret),
+      body := jsonb_build_object('user_id', NEW.user_id,'title', NEW.title,'body', NEW.body,'category', NEW.category,'reference_id', NEW.reference_id),
+      timeout_milliseconds := 15000
+    ) INTO v_req_id;
+  END IF;
 
   RETURN NEW;
 END;
 $function$;
+
+COMMENT ON FUNCTION public.notify_push_on_new_notification() IS 'Trigger di tabel notifications: fan-out ke Web Push (send-web-push) dan Telegram (send-telegram-notification, spec v5.0 section 19) sesuai notification_preferences user. Diupdate 20 Agustus 2026 buat nambahin channel Telegram.';
 
 REVOKE ALL ON FUNCTION public.notify_push_on_new_notification() FROM PUBLIC;
 
@@ -2517,6 +3109,44 @@ GRANT ALL ON FUNCTION public.quote_is_fresh(timestamp WITH time zone, timestamp 
 
 GRANT ALL ON FUNCTION public.quote_is_fresh(timestamp WITH time zone, timestamp WITH time zone) TO service_role;
 
+CREATE FUNCTION public.rate_limit_identity()
+  RETURNS text
+  LANGUAGE plpgsql
+  STABLE
+  SET search_path TO 'public'
+  AS $function$
+DECLARE
+  v_uid text;
+  v_ip text;
+BEGIN
+  v_uid := auth.uid()::text;
+  IF v_uid IS NOT NULL THEN
+    RETURN v_uid;
+  END IF;
+
+  BEGIN
+    v_ip := split_part(
+      coalesce(current_setting('request.headers', true)::json->>'x-forwarded-for', ''),
+      ',', 1
+    );
+  EXCEPTION WHEN OTHERS THEN
+    v_ip := NULL;
+  END;
+
+  IF v_ip IS NOT NULL AND btrim(v_ip) <> '' THEN
+    RETURN 'ip:' || btrim(v_ip);
+  END IF;
+
+  RETURN 'anon-global';
+END;
+$function$;
+
+COMMENT ON FUNCTION public.rate_limit_identity() IS 'Identitas buat rate-limit: auth.uid() kalau login, else IP client dari header x-forwarded-for, else anon-global sbg fallback terakhir.';
+
+GRANT ALL ON FUNCTION public.rate_limit_identity() TO authenticated;
+
+GRANT ALL ON FUNCTION public.rate_limit_identity() TO service_role;
+
 CREATE FUNCTION public.reconcile_fetch_ipo_calendar()
   RETURNS void
   LANGUAGE plpgsql
@@ -2653,14 +3283,14 @@ GRANT ALL ON FUNCTION public.reconcile_fetch_ipo_calendar() TO service_role;
 CREATE FUNCTION public.reconcile_job_runs()
   RETURNS void
   LANGUAGE plpgsql
-  SECURITY DEFINER
-  SET search_path TO ''
+  SET search_path TO 'public', 'net', 'pg_temp'
   AS $function$
 DECLARE
   r record;
   v_status_code int;
   v_error_msg text;
   v_timed_out boolean;
+  v_content text;
 BEGIN
   FOR r IN
     SELECT id, (detail->>'net_request_id')::bigint AS req_id
@@ -2670,13 +3300,16 @@ BEGIN
       AND NOT (detail ? 'reconciled')
       AND started_at > now() - interval '2 hours'
   LOOP
-    SELECT status_code, error_msg, timed_out INTO v_status_code, v_error_msg, v_timed_out
+    SELECT status_code, error_msg, timed_out, left(content, 500)
+      INTO v_status_code, v_error_msg, v_timed_out, v_content
     FROM net._http_response WHERE id = r.req_id;
 
     IF v_status_code IS NOT NULL THEN
       UPDATE public.job_runs
       SET status = CASE WHEN v_status_code BETWEEN 200 AND 299 THEN 'SUCCESS' ELSE 'ERROR' END,
           detail = detail || jsonb_build_object('reconciled', true, 'http_status', v_status_code)
+            || (CASE WHEN v_status_code NOT BETWEEN 200 AND 299 AND v_content IS NOT NULL
+                     THEN jsonb_build_object('response_body', v_content) ELSE '{}'::jsonb END)
       WHERE id = r.id;
     ELSIF v_error_msg IS NOT NULL OR v_timed_out THEN
       UPDATE public.job_runs
@@ -2730,7 +3363,17 @@ BEGIN
     WHEN 'HIT_TP2' THEN v_result := 'WIN'; v_exit := NEW.tp2;
     WHEN 'HIT_SL' THEN v_result := 'LOSS'; v_exit := NEW.stop_loss;
     WHEN 'EXPIRED' THEN v_result := 'BREAKEVEN'; v_exit := NULL;
-    WHEN 'INVALIDATED' THEN v_result := 'INVALID'; v_exit := NULL;
+    WHEN 'INVALIDATED' THEN
+      -- FIX 22 Agustus 2026: sinyal yang di-invalidate KARENA digantikan sinyal baru
+      -- (superseded_by terisi) dipisah dari INVALID generik. Root cause churn (sinyal
+      -- mati rata-rata 5.1 jam sebelum sempat resolve alami) belum diperbaiki di
+      -- generate-signals-mtf -- ini baru langkah labeling supaya kelihatan jelas di data.
+      IF NEW.superseded_by IS NOT NULL THEN
+        v_result := 'SUPERSEDED_UNRESOLVED';
+      ELSE
+        v_result := 'INVALID';
+      END IF;
+      v_exit := NULL;
     ELSE RETURN NEW;
   END CASE;
 
@@ -2860,7 +3503,7 @@ begin
   where id = v_uid and deleted_at is null;
 
   update public.subscriptions
-  set cancel_at_period_end = true
+  set cancel_at_period_end = true, status = 'pending_cancel'
   where user_id = v_uid and status = 'active';
 
   insert into public.audit_logs (actor_id, action, entity_type, entity_id, detail)
@@ -2959,7 +3602,8 @@ CREATE FUNCTION public.run_backtest (
 declare
   v_period_start date;
   v_period_end date;
-  v_min_sample int := 30;
+  v_alpha numeric := 0.05;
+  v_min_folds_for_cv int := 3;
   v_formula_version text;
   v_results jsonb := '[]'::jsonb;
   v_mode record;
@@ -2977,12 +3621,17 @@ begin
   select coalesce(max(s.formula_version), 'unknown') into v_formula_version
   from public.signals s join public.signal_results sr on sr.signal_id = s.id;
 
-  for v_mode in select level_mode, wr_threshold_pct, requires_positive_ev from public.backtest_gate_config
+  for v_mode in select level_mode, wr_threshold_pct, requires_positive_ev, min_profit_factor,
+                       max_drawdown_r_limit, min_sample_size, min_expectancy_r, min_sharpe_ratio, max_fold_cv_pct
+               from public.backtest_gate_config
   loop
     declare
-      v_total int; v_win int; v_loss int; v_breakeven int; v_invalid int;
+      v_total int; v_win int; v_loss int; v_breakeven int; v_invalid int; v_ara_arb int; v_superseded int;
       v_avg_win_r numeric; v_avg_loss_r numeric; v_gross_win numeric; v_gross_loss numeric;
-      v_win_rate numeric; v_ev numeric; v_profit_factor numeric;
+      v_win_rate numeric; v_ev numeric; v_profit_factor numeric; v_p_value numeric; v_significant boolean;
+      v_max_dd_r numeric;
+      v_sharpe numeric; v_r_mean numeric; v_r_stddev numeric;
+      v_fold_cv numeric; v_fold_count int;
       v_gate_passed boolean := true; v_fail_reasons text[] := '{}';
     begin
       select
@@ -2991,11 +3640,13 @@ begin
         count(*) filter (where sr.result = 'LOSS'),
         count(*) filter (where sr.result = 'BREAKEVEN'),
         count(*) filter (where sr.result = 'INVALID'),
+        count(*) filter (where sr.result = 'ARA_ARB_UNFILLED'),
+        count(*) filter (where sr.result = 'SUPERSEDED_UNRESOLVED'),
         avg(sr.r_multiple) filter (where sr.result = 'WIN'),
         avg(sr.r_multiple) filter (where sr.result = 'LOSS'),
         sum(sr.r_multiple) filter (where sr.result = 'WIN'),
         abs(sum(sr.r_multiple) filter (where sr.result = 'LOSS'))
-      into v_total, v_win, v_loss, v_breakeven, v_invalid, v_avg_win_r, v_avg_loss_r, v_gross_win, v_gross_loss
+      into v_total, v_win, v_loss, v_breakeven, v_invalid, v_ara_arb, v_superseded, v_avg_win_r, v_avg_loss_r, v_gross_win, v_gross_loss
       from public.signal_results sr
       join public.signals s on s.id = sr.signal_id
       where sr.evaluated_at::date between v_period_start and v_period_end
@@ -3009,45 +3660,143 @@ begin
       v_profit_factor := case when coalesce(v_gross_loss,0) > 0 then round(v_gross_win / v_gross_loss, 2)
                                when coalesce(v_gross_win,0) > 0 then null
                                else null end;
+      v_p_value := public.binomial_sf(v_win, v_total, 0.5);
+      v_significant := v_p_value is not null and v_p_value < v_alpha;
 
-      if v_total < v_min_sample then
+      select coalesce(max(running_peak - running_equity), 0)
+      into v_max_dd_r
+      from (
+        select
+          running_equity,
+          max(running_equity) over (order by evaluated_at rows unbounded preceding) as running_peak,
+          evaluated_at
+        from (
+          select
+            sr.evaluated_at,
+            sum(sr.r_multiple) over (order by sr.evaluated_at rows unbounded preceding) as running_equity
+          from public.signal_results sr
+          join public.signals s on s.id = sr.signal_id
+          where sr.evaluated_at::date between v_period_start and v_period_end
+            and (p_timeframe = 'ALL' or s.signal_tier = p_timeframe)
+            and s.level_mode = v_mode.level_mode
+            and sr.result in ('WIN','LOSS')
+        ) base
+      ) peaked;
+
+      -- Sharpe ratio (syarat #8): mean/stddev dari r_multiple per trade resolved
+      select avg(sr.r_multiple), stddev_samp(sr.r_multiple)
+      into v_r_mean, v_r_stddev
+      from public.signal_results sr
+      join public.signals s on s.id = sr.signal_id
+      where sr.evaluated_at::date between v_period_start and v_period_end
+        and (p_timeframe = 'ALL' or s.signal_tier = p_timeframe)
+        and s.level_mode = v_mode.level_mode
+        and sr.result in ('WIN','LOSS');
+
+      v_sharpe := case when coalesce(v_r_stddev, 0) > 0 then round(v_r_mean / v_r_stddev, 3) else null end;
+
+      -- Konsistensi per fold mingguan (syarat #9): CV win rate antar minggu
+      select stddev_samp(fold_wr), avg(fold_wr), count(*)
+      into v_fold_cv, v_r_mean, v_fold_count
+      from (
+        select
+          date_trunc('week', sr.evaluated_at) as wk,
+          100.0 * count(*) filter (where sr.result = 'WIN') / nullif(count(*), 0) as fold_wr
+        from public.signal_results sr
+        join public.signals s on s.id = sr.signal_id
+        where sr.evaluated_at::date between v_period_start and v_period_end
+          and (p_timeframe = 'ALL' or s.signal_tier = p_timeframe)
+          and s.level_mode = v_mode.level_mode
+          and sr.result in ('WIN','LOSS')
+        group by 1
+        having count(*) > 0
+      ) folds;
+
+      v_fold_cv := case when v_fold_count >= v_min_folds_for_cv and coalesce(v_r_mean, 0) > 0
+                         then round(v_fold_cv / v_r_mean * 100, 2)
+                         else null end;
+
+      if v_total < v_mode.min_sample_size then
         v_gate_passed := false;
         v_fail_reasons := array_append(v_fail_reasons,
-          format('INSUFFICIENT_SAMPLE: hanya %s trade, minimal %s', v_total, v_min_sample));
+          format('INSUFFICIENT_SAMPLE: hanya %s trade, minimal %s', v_total, v_mode.min_sample_size));
       end if;
       if v_win_rate is null or v_win_rate < v_mode.wr_threshold_pct then
         v_gate_passed := false;
         v_fail_reasons := array_append(v_fail_reasons,
           format('WIN_RATE_BELOW_THRESHOLD: %s%% < %s%%', coalesce(v_win_rate::text,'null'), v_mode.wr_threshold_pct));
       end if;
-      if v_mode.requires_positive_ev and (v_ev is null or v_ev <= 0) then
+      if v_mode.requires_positive_ev and (v_ev is null or v_ev < v_mode.min_expectancy_r) then
         v_gate_passed := false;
         v_fail_reasons := array_append(v_fail_reasons,
-          format('NEGATIVE_OR_ZERO_EV: %s', coalesce(v_ev::text,'null')));
+          format('EXPECTANCY_BELOW_THRESHOLD: %sR < %sR', coalesce(v_ev::text,'null'), v_mode.min_expectancy_r));
+      end if;
+      if v_profit_factor is null or v_profit_factor < v_mode.min_profit_factor then
+        v_gate_passed := false;
+        v_fail_reasons := array_append(v_fail_reasons,
+          format('PROFIT_FACTOR_BELOW_THRESHOLD: %s < %s', coalesce(v_profit_factor::text,'null'), v_mode.min_profit_factor));
+      end if;
+      if v_max_dd_r > v_mode.max_drawdown_r_limit then
+        v_gate_passed := false;
+        v_fail_reasons := array_append(v_fail_reasons,
+          format('MAX_DRAWDOWN_EXCEEDED: %sR > %sR', v_max_dd_r, v_mode.max_drawdown_r_limit));
+      end if;
+      if not v_significant then
+        v_gate_passed := false;
+        v_fail_reasons := array_append(v_fail_reasons,
+          format('NOT_STATISTICALLY_SIGNIFICANT: p_value=%s >= alpha=%s (H0: win rate <= 50%% belum bisa ditolak)',
+            coalesce(v_p_value::text,'null'), v_alpha));
+      end if;
+      if v_total >= v_mode.min_sample_size and (v_sharpe is null or v_sharpe < v_mode.min_sharpe_ratio) then
+        v_gate_passed := false;
+        v_fail_reasons := array_append(v_fail_reasons,
+          format('SHARPE_BELOW_THRESHOLD: %s < %s', coalesce(v_sharpe::text,'null'), v_mode.min_sharpe_ratio));
+      end if;
+      if v_fold_cv is not null and v_fold_cv > v_mode.max_fold_cv_pct then
+        v_gate_passed := false;
+        v_fail_reasons := array_append(v_fail_reasons,
+          format('INCONSISTENT_ACROSS_FOLDS: CV %s%% > %s%% (win rate antar minggu terlalu bervariasi, indikasi overfit)', v_fold_cv, v_mode.max_fold_cv_pct));
+      elsif v_fold_count < v_min_folds_for_cv then
+        v_fail_reasons := array_append(v_fail_reasons,
+          format('INFO_FOLD_CHECK_SKIPPED: cuma %s fold minggu, minimal %s buat cek konsistensi (bukan alasan gagal gate)', v_fold_count, v_min_folds_for_cv));
+      end if;
+      if v_superseded > v_total then
+        v_fail_reasons := array_append(v_fail_reasons,
+          format('WARNING_HIGH_CHURN: %s sinyal ke-supersede vs cuma %s yang resolve alami -- sample size gate ini kemungkinan under-estimate, lihat catatan churn generate-signals-mtf', v_superseded, v_total));
       end if;
       if not v_gate_passed then v_overall_pass := false; end if;
 
       insert into public.backtest_runs (
         formula_version, timeframe, level_mode, universe, period_start, period_end,
-        total_trades, win_trades, loss_trades, win_rate, expected_value, profit_factor,
+        total_trades, win_trades, loss_trades, win_rate, expected_value, profit_factor, max_drawdown,
         gate_wr_threshold, gate_requires_positive_ev, gate_passed, fail_reasons,
+        p_value, is_statistically_significant, ara_arb_unfilled_count,
+        sharpe_ratio, fold_consistency_cv, fold_count, min_sample_required,
         assumptions, data_snapshot_note, run_by
       ) values (
         v_formula_version, 'D1', v_mode.level_mode,
         'IDX seluruh stock master aktif -- segmen: ' || p_timeframe || ' / level_mode: ' || v_mode.level_mode,
         v_period_start, v_period_end,
-        v_total, v_win, v_loss, v_win_rate, v_ev, v_profit_factor,
+        v_total, v_win, v_loss, v_win_rate, v_ev, v_profit_factor, v_max_dd_r,
         v_mode.wr_threshold_pct, v_mode.requires_positive_ev, v_gate_passed, v_fail_reasons,
+        v_p_value, v_significant, coalesce(v_ara_arb, 0),
+        v_sharpe, v_fold_cv, v_fold_count, v_mode.min_sample_size,
         jsonb_build_object(
           'signal_tier_segment', p_timeframe,
           'level_mode_segment', v_mode.level_mode,
           'source', 'signal_results (real forward evaluation via evaluate-signals)',
           'breakeven_excluded_from_wr', v_breakeven,
           'invalidated_excluded_from_wr', v_invalid,
+          'ara_arb_excluded_from_wr', coalesce(v_ara_arb, 0),
+          'superseded_unresolved_excluded_from_wr', coalesce(v_superseded, 0),
           'loss_r_assumption', '1R penuh per HIT_SL',
           'no_look_ahead', 'signal dievaluasi worker evaluate-signals pakai EOD setelah signal dibuat',
           'level_mode_segmentation', 'AKTIF sejak 20 Agustus 2026 -- engine generate-signals-mtf v50 sudah mengisi level_mode',
-          'transaction_cost', 'tidak dimasukkan (spec belum tentukan asumsi biaya transaksi)'
+          'transaction_cost', 'tidak dimasukkan (spec belum tentukan asumsi biaya transaksi)',
+          'statistical_test', format('binomial one-tailed, H0: WR<=50%%, alpha=%s -- ditambahkan 22 Agustus 2026 (spec v6.1 section 3)', v_alpha),
+          'gate_pf_dd_added', format('min_profit_factor=%s, max_drawdown_r_limit=%s -- ditambahkan & dikalibrasi 23 Agustus 2026 (audit v6.1 sec5.1, asumsi risk 1%% per trade)', v_mode.min_profit_factor, v_mode.max_drawdown_r_limit),
+          'gate_sharpe_fold_expectancy_added', format('min_sample_size=%s, min_expectancy_r=%s, min_sharpe_ratio=%s, max_fold_cv_pct=%s -- ditambahkan 23 Agustus 2026 (audit blueprint v6.1 sec5.1, 9 syarat gate final)', v_mode.min_sample_size, v_mode.min_expectancy_r, v_mode.min_sharpe_ratio, v_mode.max_fold_cv_pct),
+          'known_issue', 'churn fix generate-signals-mtf sudah dideploy 23 Agustus tapi belum tervalidasi live (bursa tutup weekend) -- tunggu data hari kerja berikutnya'
         ),
         'Auto-generated per level_mode dari signal_results real per ' || now()::text,
         auth.uid()
@@ -3057,9 +3806,14 @@ begin
         'level_mode', v_mode.level_mode,
         'backtest_run_id', v_run_id,
         'total_trades', v_total, 'win', v_win, 'loss', v_loss,
-        'breakeven', v_breakeven, 'invalid', v_invalid,
+        'breakeven', v_breakeven, 'invalid', v_invalid, 'ara_arb_unfilled', coalesce(v_ara_arb, 0),
+        'superseded_unresolved', coalesce(v_superseded, 0),
         'win_rate_pct', v_win_rate, 'expected_value_r', v_ev, 'profit_factor', v_profit_factor,
-        'gate_threshold_pct', v_mode.wr_threshold_pct, 'gate_passed', v_gate_passed,
+        'max_drawdown_r', v_max_dd_r, 'sharpe_ratio', v_sharpe,
+        'fold_consistency_cv_pct', v_fold_cv, 'fold_count', v_fold_count,
+        'p_value', v_p_value, 'is_statistically_significant', v_significant,
+        'gate_threshold_pct', v_mode.wr_threshold_pct, 'min_sample_required', v_mode.min_sample_size,
+        'gate_passed', v_gate_passed,
         'fail_reasons', v_fail_reasons
       );
     end;
@@ -3074,11 +3828,143 @@ begin
 end;
 $function$;
 
+COMMENT ON FUNCTION public.run_backtest(text,date,date) IS 'Gate backtest per level_mode dari data forward-test real (signal_results). Syarat PASS: sample >=30, WR >= threshold per level_mode, EV>0, PF >= min_profit_factor, Max DD (R) < max_drawdown_r_limit, p_value < 0.05 (spec v6.1 section 3, PF & Max DD ditambahkan 23 Agustus 2026).';
+
 REVOKE ALL ON FUNCTION public.run_backtest(text, date, date) FROM PUBLIC;
 
 GRANT ALL ON FUNCTION public.run_backtest(text, date, date) TO authenticated;
 
 GRANT ALL ON FUNCTION public.run_backtest(text, date, date) TO service_role;
+
+CREATE FUNCTION public.run_token_ledger_tests()
+  RETURNS TABLE (
+    test_name text,
+    passed    boolean,
+    detail    text
+  )
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path TO 'public'
+  AS $function$
+DECLARE
+  v_user_a uuid := gen_random_uuid();
+  v_user_b uuid := gen_random_uuid();
+  v_stock_id uuid;
+  v_idem_key uuid := gen_random_uuid();
+  v_result record;
+  v_json jsonb;
+  v_balance int;
+  v_wallet_balance int;
+  v_ledger_sum int;
+BEGIN
+  INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, created_at, updated_at, aud, role)
+  VALUES
+    (v_user_a, 'test-token-ledger-a@izy.local', '', now(), now(), now(), 'authenticated', 'authenticated'),
+    (v_user_b, 'test-token-ledger-b@izy.local', '', now(), now(), now(), 'authenticated', 'authenticated');
+
+  INSERT INTO public.profiles (id, is_admin, is_premium)
+  VALUES (v_user_a, false, false), (v_user_b, false, false)
+  ON CONFLICT (id) DO UPDATE SET is_admin = false, is_premium = false;
+
+  SELECT id INTO v_stock_id FROM public.stocks WHERE is_active = true LIMIT 1;
+
+  PERFORM set_config('request.jwt.claim.sub', v_user_a::text, true);
+  SELECT * INTO v_result FROM public.deduct_token('TEST_ACTION', gen_random_uuid());
+  RETURN QUERY SELECT
+    'deduct_token: saldo awal free user = 5, setelah 1x deduct = 4'::text,
+    (v_result.balance = 4),
+    format('balance=%s already_charged=%s', v_result.balance, v_result.already_charged);
+
+  DECLARE v_ref uuid := gen_random_uuid();
+  BEGIN
+    PERFORM public.deduct_token('IDEMPOTENT_TEST', v_ref);
+    SELECT * INTO v_result FROM public.deduct_token('IDEMPOTENT_TEST', v_ref);
+    RETURN QUERY SELECT
+      'deduct_token: reference_id sama -> already_charged=true, saldo tidak berkurang lagi'::text,
+      (v_result.already_charged = true AND v_result.balance = 3),
+      format('already_charged=%s balance=%s (expected 3)', v_result.already_charged, v_result.balance);
+  END;
+
+  PERFORM public.deduct_token('DRAIN1', gen_random_uuid());
+  PERFORM public.deduct_token('DRAIN2', gen_random_uuid());
+  PERFORM public.deduct_token('DRAIN3', gen_random_uuid());
+  BEGIN
+    PERFORM public.deduct_token('SHOULD_FAIL', gen_random_uuid());
+    RETURN QUERY SELECT
+      'deduct_token: saldo 0 -> harus raise INSUFFICIENT_TOKENS'::text,
+      false,
+      'TIDAK raise exception padahal saldo sudah 0 -- BUG';
+  EXCEPTION WHEN OTHERS THEN
+    RETURN QUERY SELECT
+      'deduct_token: saldo 0 -> harus raise INSUFFICIENT_TOKENS'::text,
+      (SQLERRM = 'INSUFFICIENT_TOKENS'),
+      format('error message: %s', SQLERRM);
+  END;
+
+  PERFORM set_config('request.jwt.claim.sub', v_user_b::text, true);
+  IF v_stock_id IS NOT NULL THEN
+    SELECT public.unlock_signal_with_token(v_stock_id, v_idem_key) INTO v_json;
+    SELECT balance INTO v_balance FROM public.token_wallets WHERE user_id = v_user_b;
+    RETURN QUERY SELECT
+      'unlock_signal_with_token: unlock pertama sukses, saldo 5 -> 4'::text,
+      (v_balance = 4),
+      format('balance=%s result=%s', v_balance, v_json::text);
+
+    SELECT public.unlock_signal_with_token(v_stock_id, v_idem_key) INTO v_json;
+    SELECT balance INTO v_balance FROM public.token_wallets WHERE user_id = v_user_b;
+    RETURN QUERY SELECT
+      'unlock_signal_with_token: idempotency_key sama -> already_processed=true, saldo tetap 4'::text,
+      ((v_json->>'already_processed')::boolean = true AND v_balance = 4),
+      format('result=%s balance=%s', v_json::text, v_balance);
+
+    SELECT public.unlock_signal_with_token(v_stock_id, gen_random_uuid()) INTO v_json;
+    SELECT balance INTO v_balance FROM public.token_wallets WHERE user_id = v_user_b;
+    RETURN QUERY SELECT
+      'unlock_signal_with_token: stock sama, idem_key baru, hari sama -> already_unlocked=true, saldo tetap 4 (no double charge)'::text,
+      ((v_json->>'already_unlocked')::boolean = true AND v_balance = 4),
+      format('result=%s balance=%s', v_json::text, v_balance);
+  ELSE
+    RETURN QUERY SELECT 'unlock_signal_with_token tests'::text, false, 'DISKIP: tidak ada saham aktif di tabel stocks untuk dites';
+  END IF;
+
+  -- Rekonsiliasi ledger vs wallet untuk user_a: saldo wallet harus sama dengan
+  -- sum(amount) semua entry ledgernya (DAILY_GRANT +5, lalu 5x -1).
+  -- (Sengaja pakai SUM, bukan "ambil entry terakhir ORDER BY created_at" --
+  -- created_at pakai now() yang nilainya sama untuk semua statement dalam
+  -- satu transaksi yang sama, jadi tidak reliable sebagai tie-breaker urutan.)
+  SELECT balance INTO v_wallet_balance FROM public.token_wallets WHERE user_id = v_user_a;
+  SELECT sum(tt.amount) INTO v_ledger_sum
+  FROM public.token_transactions tt
+  JOIN public.token_wallets tw ON tw.id = tt.wallet_id
+  WHERE tw.user_id = v_user_a;
+  RETURN QUERY SELECT
+    'token_wallets.balance konsisten dengan SUM(token_transactions.amount) -- no drift'::text,
+    (v_wallet_balance = v_ledger_sum),
+    format('wallet balance=%s sum(ledger amount)=%s', v_wallet_balance, v_ledger_sum);
+
+  DELETE FROM public.token_transactions WHERE wallet_id IN (SELECT id FROM public.token_wallets WHERE user_id IN (v_user_a, v_user_b));
+  DELETE FROM public.signal_unlocks WHERE user_id IN (v_user_a, v_user_b);
+  DELETE FROM public.token_wallets WHERE user_id IN (v_user_a, v_user_b);
+  DELETE FROM public.profiles WHERE id IN (v_user_a, v_user_b);
+  DELETE FROM auth.users WHERE id IN (v_user_a, v_user_b);
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+
+EXCEPTION WHEN OTHERS THEN
+  DELETE FROM public.token_transactions WHERE wallet_id IN (SELECT id FROM public.token_wallets WHERE user_id IN (v_user_a, v_user_b));
+  DELETE FROM public.signal_unlocks WHERE user_id IN (v_user_a, v_user_b);
+  DELETE FROM public.token_wallets WHERE user_id IN (v_user_a, v_user_b);
+  DELETE FROM public.profiles WHERE id IN (v_user_a, v_user_b);
+  DELETE FROM auth.users WHERE id IN (v_user_a, v_user_b);
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  RETURN QUERY SELECT 'SUITE CRASHED'::text, false, SQLERRM;
+END;
+$function$;
+
+COMMENT ON FUNCTION public.run_token_ledger_tests() IS 'Test suite otomatis untuk token deduction (deduct_token) & signal unlock (unlock_signal_with_token): atomicity, idempotency by reference_id, double-spend prevention, insufficient balance. Spec v6.1 section 4 prioritas #2 butir 1. Panggil manual: SELECT * FROM run_token_ledger_tests(). Hanya service_role yang bisa eksekusi.';
+
+REVOKE ALL ON FUNCTION public.run_token_ledger_tests() FROM PUBLIC;
+
+GRANT ALL ON FUNCTION public.run_token_ledger_tests() TO service_role;
 
 CREATE FUNCTION public.set_updated_at()
   RETURNS TRIGGER
@@ -3527,25 +4413,60 @@ REVOKE ALL ON FUNCTION public.trigger_fetch_index() FROM PUBLIC;
 
 GRANT ALL ON FUNCTION public.trigger_fetch_index() TO service_role;
 
-CREATE FUNCTION public.trigger_fetch_ipo_calendar()
+CREATE FUNCTION public.trigger_fetch_ipo_calendar_retry()
   RETURNS void
   LANGUAGE plpgsql
   SECURITY DEFINER
   SET search_path TO 'public', 'extensions'
   AS $function$
-DECLARE v_url text; v_key text; v_secret text;
+DECLARE
+  v_last_status text;
 BEGIN
+  SELECT status INTO v_last_status
+  FROM public.job_runs
+  WHERE job_name = 'fetch-ipo-calendar'
+    AND started_at > (now() AT TIME ZONE 'Asia/Jakarta')::date
+  ORDER BY started_at DESC
+  LIMIT 1;
+
+  IF v_last_status IS DISTINCT FROM 'ERROR' THEN
+    RETURN; -- run terakhir sukses (atau belum ada run), skip retry
+  END IF;
+
+  PERFORM public.trigger_fetch_ipo_calendar();
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION public.trigger_fetch_ipo_calendar_retry() FROM PUBLIC;
+
+GRANT ALL ON FUNCTION public.trigger_fetch_ipo_calendar_retry() TO service_role;
+
+CREATE FUNCTION public.trigger_fetch_ipo_calendar()
+  RETURNS void
+  LANGUAGE plpgsql
+  SET search_path TO 'public', 'extensions'
+  AS $function$
+DECLARE
+  v_url text; v_key text; v_secret text; v_run_id uuid; v_req_id bigint;
+BEGIN
+  v_run_id := public.job_run_start('fetch-ipo-calendar');
   SELECT decrypted_secret INTO v_url FROM vault.decrypted_secrets WHERE name = 'project_url';
   SELECT decrypted_secret INTO v_key FROM vault.decrypted_secrets WHERE name = 'service_role_key';
   SELECT value INTO v_secret FROM public.internal_secrets WHERE key = 'worker_shared_secret';
   IF v_url IS NULL OR v_key IS NULL OR v_secret IS NULL THEN
-    RAISE WARNING 'fetch-ipo-calendar: secret belum lengkap'; RETURN;
+    PERFORM public.job_run_finish(v_run_id, 'ERROR', jsonb_build_object('reason', 'vault/internal secrets belum diset'));
+    RETURN;
   END IF;
-  PERFORM net.http_post(
+  SELECT net.http_post(
     url := v_url || '/functions/v1/fetch-ipo-calendar',
-    headers := jsonb_build_object('Authorization', 'Bearer ' || v_key, 'Content-Type', 'application/json', 'x-worker-secret', v_secret)
-  );
-END; $function$;
+    headers := jsonb_build_object('Authorization', 'Bearer ' || v_key, 'Content-Type', 'application/json', 'x-worker-secret', v_secret),
+    timeout_milliseconds := 100000
+  ) INTO v_req_id;
+  PERFORM public.job_run_finish(v_run_id, 'SUCCESS', jsonb_build_object('net_request_id', v_req_id, 'note', 'dispatched, menunggu reconcile'));
+END;
+$function$;
+
+COMMENT ON FUNCTION public.trigger_fetch_ipo_calendar() IS 'Dipindah ke Railway 23 Agustus 2026 (fix bug: masih nembak edge function lama yang mati 403 sejak 19 Agustus). Target: https://sealangelai.up.railway.app/api/cron/fetch-ipo-calendar, auth via x-worker-secret.';
 
 REVOKE ALL ON FUNCTION public.trigger_fetch_ipo_calendar() FROM PUBLIC;
 
@@ -3628,7 +4549,6 @@ GRANT ALL ON FUNCTION public.trigger_fetch_quotes() TO service_role;
 CREATE FUNCTION public.trigger_generate_signal_reasoning()
   RETURNS void
   LANGUAGE plpgsql
-  SECURITY DEFINER
   SET search_path TO 'public', 'extensions'
   AS $function$
 DECLARE
@@ -3642,13 +4562,10 @@ BEGIN
     PERFORM public.job_run_finish(v_run_id, 'ERROR', jsonb_build_object('reason', 'vault/internal secrets belum diset'));
     RETURN;
   END IF;
-  -- FIX (audit 19 Agustus 2026 lanjutan): edge function sekarang sudah punya
-  -- AbortController 20 detik per model (sebelumnya fetch tanpa timeout sama sekali,
-  -- jadi hang sampai 90 detik platform limit tanpa sempat fallback). limit diturunin
-  -- dari 15 -> 8 dan pg_net timeout dinaikkan 90s -> 150s, konsisten dengan
-  -- generate-trending-reason, biar ada headroom kalau semua provider di-chain kena retry.
+  -- FIX (23 Agustus 2026): limit 2->1. Worst case per signal ~74s (9Router 50s timeout +
+  -- OpenRouter 3x8s fallback), jadi limit=1 aman di bawah budget 150s pg_net.
   SELECT net.http_post(
-    url := v_url || '/functions/v1/generate-signal-reasoning?limit=8',
+    url := v_url || '/functions/v1/generate-signal-reasoning?limit=1',
     headers := jsonb_build_object('Authorization','Bearer ' || v_key,'Content-Type','application/json','x-worker-secret', v_secret),
     timeout_milliseconds := 150000
   ) INTO v_req_id;
@@ -3962,48 +4879,52 @@ CREATE FUNCTION public.unlock_signal_with_ad (
   SECURITY DEFINER
   SET search_path TO 'public'
   AS $function$
-                                                                                                                                                                                                                            declare
-                                                                                                                                                                                                                              v_user       uuid := auth.uid();
-                                                                                                                                                                                                                                v_wallet     public.token_wallets;
-                                                                                                                                                                                                                                  v_today      date := (now() at time zone 'Asia/Jakarta')::date;
-                                                                                                                                                                                                                                    v_is_premium boolean;
-                                                                                                                                                                                                                                    begin
-                                                                                                                                                                                                                                      if v_user is null then
-                                                                                                                                                                                                                                          raise exception 'NOT_AUTHENTICATED';
-                                                                                                                                                                                                                                            end if;
+declare
+  v_user       uuid := auth.uid();
+  v_wallet     public.token_wallets;
+  v_today      date := (now() at time zone 'Asia/Jakarta')::date;
+  v_is_premium boolean;
+begin
+  if v_user is null then
+    raise exception 'NOT_AUTHENTICATED';
+  end if;
 
-                                                                                                                                                                                                                                              select coalesce(is_premium, false) into v_is_premium from public.profiles where id = v_user;
-                                                                                                                                                                                                                                                if v_is_premium then
-                                                                                                                                                                                                                                                    raise exception 'PREMIUM_NO_ADS_NEEDED';
-                                                                                                                                                                                                                                                      end if;
+  IF NOT public.check_rate_limit('unlock_signal_with_ad', v_user::text, 15, 60) THEN
+    RAISE EXCEPTION 'RATE_LIMITED: terlalu banyak percobaan unlock, coba lagi sebentar' USING ERRCODE = '42901';
+  END IF;
 
-                                                                                                                                                                                                                                                        v_wallet := public.ensure_wallet_current(v_user);
+  select coalesce(is_premium, false) into v_is_premium from public.profiles where id = v_user;
+  if v_is_premium then
+    raise exception 'PREMIUM_NO_ADS_NEEDED';
+  end if;
 
-                                                                                                                                                                                                                                                          if exists (
-                                                                                                                                                                                                                                                              select 1 from public.signal_unlocks
-                                                                                                                                                                                                                                                                  where user_id = v_user and stock_id = p_stock_id and unlock_date = v_today
-                                                                                                                                                                                                                                                                    ) then
-                                                                                                                                                                                                                                                                        return jsonb_build_object('status', 'ok', 'already_unlocked', true);
-                                                                                                                                                                                                                                                                          end if;
+  v_wallet := public.ensure_wallet_current(v_user);
 
-                                                                                                                                                                                                                                                                            if v_wallet.ad_unlock_count >= 3 then
-                                                                                                                                                                                                                                                                                raise exception 'AD_LIMIT_REACHED';
-                                                                                                                                                                                                                                                                                  end if;
+  if exists (
+      select 1 from public.signal_unlocks
+      where user_id = v_user and stock_id = p_stock_id and unlock_date = v_today
+    ) then
+      return jsonb_build_object('status', 'ok', 'already_unlocked', true);
+  end if;
 
-                                                                                                                                                                                                                                                                                    update public.token_wallets
-                                                                                                                                                                                                                                                                                        set ad_unlock_count = ad_unlock_count + 1
-                                                                                                                                                                                                                                                                                            where id = v_wallet.id;
+  if v_wallet.ad_unlock_count >= 3 then
+    raise exception 'AD_LIMIT_REACHED';
+  end if;
 
-                                                                                                                                                                                                                                                                                              insert into public.token_transactions (wallet_id, amount, type, reference_id)
-                                                                                                                                                                                                                                                                                                  values (v_wallet.id, 0, 'AD_UNLOCK', p_stock_id);
+  update public.token_wallets
+    set ad_unlock_count = ad_unlock_count + 1
+    where id = v_wallet.id;
 
-                                                                                                                                                                                                                                                                                                    insert into public.signal_unlocks (user_id, stock_id, unlock_date, source)
-                                                                                                                                                                                                                                                                                                        values (v_user, p_stock_id, v_today, 'AD')
-                                                                                                                                                                                                                                                                                                            on conflict (user_id, stock_id, unlock_date) do nothing;
+  insert into public.token_transactions (wallet_id, amount, type, reference_id)
+    values (v_wallet.id, 0, 'AD_UNLOCK', p_stock_id);
 
-                                                                                                                                                                                                                                                                                                              return jsonb_build_object('status', 'ok', 'ad_unlock_count', v_wallet.ad_unlock_count + 1);
-                                                                                                                                                                                                                                                                                                              end;
-                                                                                                                                                                                                                                                                                                              $function$;
+  insert into public.signal_unlocks (user_id, stock_id, unlock_date, source)
+    values (v_user, p_stock_id, v_today, 'AD')
+    on conflict (user_id, stock_id, unlock_date) do nothing;
+
+  return jsonb_build_object('status', 'ok', 'ad_unlock_count', v_wallet.ad_unlock_count + 1);
+end;
+$function$;
 
 REVOKE ALL ON FUNCTION public.unlock_signal_with_ad(uuid) FROM PUBLIC;
 
@@ -4027,6 +4948,10 @@ begin
   if v_user is null then
     raise exception 'NOT_AUTHENTICATED';
   end if;
+
+  IF NOT public.check_rate_limit('unlock_signal_with_token', v_user::text, 15, 60) THEN
+    RAISE EXCEPTION 'RATE_LIMITED: terlalu banyak percobaan unlock, coba lagi sebentar' USING ERRCODE = '42901';
+  END IF;
 
   select p.is_admin into v_is_admin from public.profiles p where p.id = v_user;
 
@@ -4131,7 +5056,7 @@ begin
 end;
 $function$;
 
-GRANT ALL ON FUNCTION public.upsert_signal_watch_state(uuid, text, text, text, text, numeric, numeric, text, text, text, numeric, numeric, numeric, text, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.upsert_signal_watch_state(uuid, text, text, text, text, numeric, numeric, text, text, text, numeric, numeric, numeric, text, text) FROM PUBLIC;
 
 GRANT ALL ON FUNCTION public.upsert_signal_watch_state(uuid, text, text, text, text, numeric, numeric, text, text, text, numeric, numeric, numeric, text, text) TO service_role;
 
@@ -4443,9 +5368,9 @@ GRANT ALL ON public.app_ratings TO authenticated;
 
 GRANT ALL ON public.app_ratings TO service_role;
 
-CREATE INDEX idx_app_ratings_user_id ON public.app_ratings (user_id);
-
 CREATE UNIQUE INDEX app_ratings_user_id_uniq ON public.app_ratings (user_id);
+
+CREATE INDEX idx_app_ratings_user_id ON public.app_ratings (user_id);
 
 CREATE POLICY "own rating insert" ON public.app_ratings
   FOR INSERT
@@ -4503,8 +5428,26 @@ CREATE TABLE public.backtest_gate_config (
   wr_threshold_pct     numeric                  NOT NULL,
   requires_positive_ev boolean                  DEFAULT true NOT NULL,
   notes                text,
-  updated_at           timestamp with time zone DEFAULT now() NOT NULL
+  updated_at           timestamp with time zone DEFAULT now() NOT NULL,
+  min_profit_factor    numeric                  DEFAULT 1.15 NOT NULL,
+  max_drawdown_r_limit numeric                  DEFAULT 8 NOT NULL,
+  min_sample_size      integer                  DEFAULT 100 NOT NULL,
+  min_expectancy_r     numeric                  DEFAULT 0.1 NOT NULL,
+  min_sharpe_ratio     numeric                  DEFAULT 0.5 NOT NULL,
+  max_fold_cv_pct      numeric                  DEFAULT 20 NOT NULL
 );
+
+COMMENT ON COLUMN public.backtest_gate_config.min_profit_factor IS 'Syarat gate: profit_factor >= nilai ini. Spec v6.1 to-do: PF >= 1.15.';
+
+COMMENT ON COLUMN public.backtest_gate_config.max_drawdown_r_limit IS 'Syarat gate: max_drawdown (dalam satuan R, peak-to-trough dari equity curve r_multiple) < nilai ini. PLACEHOLDER 8R, belum dikalibrasi -- spec v6.1 asli nyebut 25% tapi itu portfolio-equity-based, bukan R-based.';
+
+COMMENT ON COLUMN public.backtest_gate_config.min_sample_size IS 'Spec v6.1 §5.1 syarat #6: minimum trade untuk gate formal. Dokumen sarankan 100 (sanity check awal) / 200 (gate formal). Default 100.';
+
+COMMENT ON COLUMN public.backtest_gate_config.min_expectancy_r IS 'Spec v6.1 §5.1 syarat #3 (revisi dari >0 ke >0.1R): margin safety supaya biaya transaksi tidak bikin edge negatif.';
+
+COMMENT ON COLUMN public.backtest_gate_config.min_sharpe_ratio IS 'Spec v6.1 §5.1 syarat #8 (BARU): Sharpe ratio dari r_multiple per trade, minimal 0.5.';
+
+COMMENT ON COLUMN public.backtest_gate_config.max_fold_cv_pct IS 'Spec v6.1 §5.1 syarat #9 (BARU): coefficient of variation win rate antar fold (mingguan), maksimal 20% supaya tidak overfit ke periode tertentu.';
 
 ALTER TABLE public.backtest_gate_config
   ENABLE ROW LEVEL SECURITY;
@@ -4513,43 +5456,65 @@ ALTER TABLE public.backtest_gate_config
   ADD CONSTRAINT backtest_gate_config_level_mode_check CHECK (level_mode = ANY (ARRAY['SCALP'::text, 'STANDARD'::text, 'SWING'::text]));
 
 ALTER TABLE public.backtest_gate_config
+  ADD CONSTRAINT backtest_gate_config_min_sample_size_check CHECK (min_sample_size >= 30);
+
+ALTER TABLE public.backtest_gate_config
   ADD CONSTRAINT backtest_gate_config_pkey PRIMARY KEY (level_mode);
 
 ALTER TABLE public.backtest_gate_config
   ADD CONSTRAINT backtest_gate_config_wr_threshold_pct_check CHECK (wr_threshold_pct >= 60::numeric AND wr_threshold_pct <= 90::numeric);
 
-GRANT ALL ON public.backtest_gate_config TO anon;
-
-GRANT ALL ON public.backtest_gate_config TO authenticated;
+GRANT SELECT ON public.backtest_gate_config TO authenticated;
 
 GRANT ALL ON public.backtest_gate_config TO service_role;
 
 CREATE TABLE public.backtest_runs (
-  id                        uuid                     DEFAULT gen_random_uuid() NOT NULL,
-  formula_version           text                     NOT NULL,
-  timeframe                 text                     NOT NULL,
-  level_mode                text,
-  universe                  text                     NOT NULL,
-  period_start              date                     NOT NULL,
-  period_end                date                     NOT NULL,
-  total_trades              integer                  DEFAULT 0 NOT NULL,
-  win_trades                integer                  DEFAULT 0 NOT NULL,
-  loss_trades               integer                  DEFAULT 0 NOT NULL,
-  win_rate                  numeric,
-  expected_value            numeric,
-  profit_factor             numeric,
-  max_drawdown              numeric,
-  gate_wr_threshold         numeric                  NOT NULL,
-  gate_requires_positive_ev boolean                  DEFAULT true NOT NULL,
-  gate_passed               boolean                  DEFAULT false NOT NULL,
-  fail_reasons              text[],
-  assumptions               jsonb                    DEFAULT '{}'::jsonb NOT NULL,
-  data_snapshot_note        text,
-  run_by                    uuid,
-  created_at                timestamp with time zone DEFAULT now() NOT NULL
+  id                           uuid                     DEFAULT gen_random_uuid() NOT NULL,
+  formula_version              text                     NOT NULL,
+  timeframe                    text                     NOT NULL,
+  level_mode                   text,
+  universe                     text                     NOT NULL,
+  period_start                 date                     NOT NULL,
+  period_end                   date                     NOT NULL,
+  total_trades                 integer                  DEFAULT 0 NOT NULL,
+  win_trades                   integer                  DEFAULT 0 NOT NULL,
+  loss_trades                  integer                  DEFAULT 0 NOT NULL,
+  win_rate                     numeric,
+  expected_value               numeric,
+  profit_factor                numeric,
+  max_drawdown                 numeric,
+  gate_wr_threshold            numeric                  NOT NULL,
+  gate_requires_positive_ev    boolean                  DEFAULT true NOT NULL,
+  gate_passed                  boolean                  DEFAULT false NOT NULL,
+  fail_reasons                 text[],
+  assumptions                  jsonb                    DEFAULT '{}'::jsonb NOT NULL,
+  data_snapshot_note           text,
+  run_by                       uuid,
+  created_at                   timestamp with time zone DEFAULT now() NOT NULL,
+  p_value                      numeric,
+  is_statistically_significant boolean,
+  ara_arb_unfilled_count       integer                  DEFAULT 0 NOT NULL,
+  sharpe_ratio                 numeric,
+  fold_consistency_cv          numeric,
+  fold_count                   integer,
+  min_sample_required          integer
 );
 
-COMMENT ON TABLE public.backtest_runs IS 'Spec v5.0 section 28.7 & 34 (BLOCKER 5). Dibuat ulang 20 Agustus 2026 setelah ditemukan hilang dari live DB. Gate: win_rate >= backtest_gate_config.wr_threshold_pct (per level_mode) DAN expected_value > 0.';
+COMMENT ON TABLE public.backtest_runs IS 'Spec v5.0 section 28.7 & 34 (BLOCKER 5). STATUS PER 20 AGUSTUS 2026: gate_passed = false di SEMUA level_mode (STANDARD 30.00% WR vs threshold 65%, SWING 0.00% vs 60%, SCALP 48.15% vs 80%). Sample size juga masih di bawah minimum 30 trade untuk STANDARD (20) dan SWING (1) - hanya SCALP yang cukup sample (27, hampir 30). Root cause utama: data historis baru ~3 hari operasi (17-20 Agustus 2026) sejak level_mode_segmentation aktif di engine generate-signals-mtf v50, BUKAN berarti formula pasti salah. Rekomendasi: (1) biarkan data terkumpul minimal 2-3 minggu lagi sebelum evaluasi ulang gate, (2) kalau setelah sample cukup WR masih jauh di bawah threshold, baru investigasi formula structural_v2. JANGAN declare BLOCKER 5 PASS tanpa re-run backtest dengan sample >=30 per level_mode dan gate_passed=true.';
+
+COMMENT ON COLUMN public.backtest_runs.p_value IS 'One-tailed binomial test p-value: P(X >= wins | n = total_trades WIN+LOSS, p = 0.5). H0: true win rate <= 0.5.';
+
+COMMENT ON COLUMN public.backtest_runs.is_statistically_significant IS 'true kalau p_value < 0.05 (alpha 5%)';
+
+COMMENT ON COLUMN public.backtest_runs.ara_arb_unfilled_count IS 'Jumlah trade yang dikecualikan dari win rate/expectancy karena kena batas Auto Reject IDX (ARA/ARB) di T+1, dicatat terpisah dari INVALID biasa.';
+
+COMMENT ON COLUMN public.backtest_runs.sharpe_ratio IS 'mean(r_multiple) / stddev_samp(r_multiple) across resolved WIN/LOSS trades. Spec v6.1 §5.1 syarat #8.';
+
+COMMENT ON COLUMN public.backtest_runs.fold_consistency_cv IS 'Coefficient of variation (%) win rate antar fold mingguan. NULL kalau fold_count < 3 (belum cukup data buat cek konsistensi). Spec v6.1 §5.1 syarat #9.';
+
+COMMENT ON COLUMN public.backtest_runs.fold_count IS 'Jumlah fold (minggu) yang punya >=1 trade resolved, dipakai buat hitung fold_consistency_cv.';
+
+COMMENT ON COLUMN public.backtest_runs.min_sample_required IS 'Threshold min_sample_size dari backtest_gate_config yang dipakai saat run ini (buat audit trail kalau threshold berubah nanti).';
 
 ALTER TABLE public.backtest_runs
   ENABLE ROW LEVEL SECURITY;
@@ -4869,6 +5834,45 @@ CREATE POLICY "economic_events readable by all" ON public.economic_events
   FOR SELECT
   USING (true);
 
+CREATE TABLE public.fear_greed_index (
+  id               uuid                     DEFAULT gen_random_uuid() NOT NULL,
+  trade_date       date                     NOT NULL,
+  momentum_score   numeric,
+  breadth_score    numeric,
+  volatility_score numeric,
+  composite_score  numeric,
+  label            text,
+  advancing_count  integer,
+  declining_count  integer,
+  unchanged_count  integer,
+  ihsg_close       numeric,
+  ihsg_ma125       numeric,
+  atr_pct          numeric,
+  created_at       timestamp with time zone DEFAULT now() NOT NULL,
+  updated_at       timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE public.fear_greed_index
+  ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.fear_greed_index
+  ADD CONSTRAINT fear_greed_index_pkey PRIMARY KEY (id);
+
+ALTER TABLE public.fear_greed_index
+  ADD CONSTRAINT fear_greed_index_trade_date_key UNIQUE (trade_date);
+
+GRANT MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE ON public.fear_greed_index TO anon;
+
+GRANT MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE ON public.fear_greed_index TO authenticated;
+
+GRANT ALL ON public.fear_greed_index TO service_role;
+
+CREATE INDEX idx_fear_greed_date ON public.fear_greed_index (trade_date DESC);
+
+CREATE POLICY fear_greed_read_all ON public.fear_greed_index
+  FOR SELECT
+  USING (true);
+
 CREATE TABLE public.feature_requests (
   id          uuid                     DEFAULT gen_random_uuid() NOT NULL,
   user_id     uuid,
@@ -5057,6 +6061,37 @@ GRANT ALL ON public.idx_eod_uploads TO service_role;
 
 CREATE INDEX idx_idx_eod_uploads_uploaded_by ON public.idx_eod_uploads (uploaded_by);
 
+CREATE TABLE public.index_history (
+  id         uuid                     DEFAULT gen_random_uuid() NOT NULL,
+  ticker     text                     DEFAULT '^JKSE'::text NOT NULL,
+  trade_date date                     NOT NULL,
+  close      numeric                  NOT NULL,
+  high       numeric,
+  low        numeric,
+  created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE public.index_history
+  ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.index_history
+  ADD CONSTRAINT index_history_pkey PRIMARY KEY (id);
+
+ALTER TABLE public.index_history
+  ADD CONSTRAINT index_history_ticker_trade_date_key UNIQUE (ticker, trade_date);
+
+GRANT MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE ON public.index_history TO anon;
+
+GRANT MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE ON public.index_history TO authenticated;
+
+GRANT ALL ON public.index_history TO service_role;
+
+CREATE INDEX idx_index_history_ticker_date ON public.index_history (ticker, trade_date DESC);
+
+CREATE POLICY index_history_read_all ON public.index_history
+  FOR SELECT
+  USING (true);
+
 CREATE TABLE public.indicators (
   id           uuid                     DEFAULT gen_random_uuid() NOT NULL,
   stock_id     uuid                     NOT NULL,
@@ -5133,6 +6168,8 @@ CREATE TABLE public.intraday_evaluations (
   created_at            timestamp with time zone DEFAULT now() NOT NULL
 );
 
+COMMENT ON TABLE public.intraday_evaluations IS 'DEPRECATED/TIDAK TERPAKAI (audit 20 Agustus 2026, spec v5.0 sec 12.2): implementasi asli intraday evaluation ada di session2_setup_previews (dipakai cron schedule_evaluate_session2_preview), bukan di tabel ini. Tabel ini 0 baris & tidak direferensikan function manapun. Jangan dipakai untuk fitur baru; pertimbangkan drop di migration terpisah kalau sudah dikonfirmasi aman.';
+
 ALTER TABLE public.intraday_evaluations
   ENABLE ROW LEVEL SECURITY;
 
@@ -5148,9 +6185,9 @@ GRANT ALL ON public.intraday_evaluations TO authenticated;
 
 GRANT ALL ON public.intraday_evaluations TO service_role;
 
-CREATE INDEX idx_intraday_evaluations_signal_id ON public.intraday_evaluations (signal_id);
-
 CREATE INDEX idx_intraday_evaluations_candle_id ON public.intraday_evaluations (candle_id);
+
+CREATE INDEX idx_intraday_evaluations_signal_id ON public.intraday_evaluations (signal_id);
 
 CREATE POLICY "intraday_evaluations readable by all" ON public.intraday_evaluations
   FOR SELECT
@@ -5177,6 +6214,9 @@ ALTER TABLE public.ipo_calendar
 
 ALTER TABLE public.ipo_calendar
   ADD CONSTRAINT ipo_calendar_status_check CHECK (status = ANY (ARRAY['UPCOMING'::text, 'OPEN'::text, 'CLOSED'::text, 'LISTED'::text, 'CANCELLED'::text]));
+
+ALTER TABLE public.ipo_calendar
+  ADD CONSTRAINT ipo_calendar_ticker_key UNIQUE (ticker);
 
 GRANT ALL ON public.ipo_calendar TO anon;
 
@@ -5326,14 +6366,24 @@ CREATE TABLE public.news (
   sentiment       text,
   related_tickers text[]                   DEFAULT '{}'::text[],
   published_at    timestamp with time zone DEFAULT now() NOT NULL,
-  created_at      timestamp with time zone DEFAULT now() NOT NULL
+  created_at      timestamp with time zone DEFAULT now() NOT NULL,
+  is_catalyst     boolean                  DEFAULT false NOT NULL,
+  impact          text
 );
+
+COMMENT ON COLUMN public.news.is_catalyst IS 'Spec 13.5: true kalau sentiment positive + ada ticker ter-mapping. Badge 🔥 Katalis di UI. TIDAK otomatis berarti bullish.';
+
+COMMENT ON COLUMN public.news.impact IS 'Spec 13.6: klasifikasi dampak berita, terpisah dari sentiment. Nilai: potentially_positive/potentially_negative/mixed_unclear/informational.';
 
 ALTER TABLE public.news
   ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.news
   ADD CONSTRAINT news_category_check CHECK (category = ANY (ARRAY['global'::text, 'domestic'::text]));
+
+ALTER TABLE public.news
+  ADD CONSTRAINT news_impact_check
+    CHECK (impact IS NULL OR (impact = ANY (ARRAY['potentially_positive'::text, 'potentially_negative'::text, 'mixed_unclear'::text, 'informational'::text])));
 
 ALTER TABLE public.news
   ADD CONSTRAINT news_pkey PRIMARY KEY (id);
@@ -5347,12 +6397,12 @@ GRANT ALL ON public.news TO authenticated;
 
 GRANT ALL ON public.news TO service_role;
 
+CREATE INDEX news_related_tickers_idx ON public.news USING gin (related_tickers);
+
 CREATE UNIQUE INDEX news_url_unique_idx ON public.news (url)
   WHERE url IS NOT NULL;
 
 CREATE INDEX news_published_at_idx ON public.news (published_at DESC);
-
-CREATE INDEX news_related_tickers_idx ON public.news USING gin (related_tickers);
 
 CREATE TRIGGER trg_notify_watchlist_news
   AFTER INSERT ON public.news
@@ -5398,9 +6448,9 @@ GRANT ALL ON public.news_events TO authenticated;
 
 GRANT ALL ON public.news_events TO service_role;
 
-CREATE INDEX idx_news_events_stock_id ON public.news_events (stock_id);
-
 CREATE INDEX idx_news_events_primary_article ON public.news_events (primary_article_id);
+
+CREATE INDEX idx_news_events_stock_id ON public.news_events (stock_id);
 
 CREATE POLICY "news_events readable by all" ON public.news_events
   FOR SELECT
@@ -5867,9 +6917,9 @@ GRANT ALL ON public.quotes TO authenticated;
 
 GRANT ALL ON public.quotes TO service_role;
 
-CREATE INDEX quotes_market_time_idx ON public.quotes (market_time);
-
 CREATE INDEX idx_quotes_stock_id ON public.quotes (stock_id);
+
+CREATE INDEX quotes_market_time_idx ON public.quotes (market_time);
 
 CREATE INDEX idx_quotes_market_cap ON public.quotes (market_cap);
 
@@ -5886,6 +6936,31 @@ CREATE TRIGGER trg_sync_quote_market_cap
 CREATE POLICY "quotes readable by all" ON public.quotes
   FOR SELECT
   USING (true);
+
+CREATE TABLE public.rate_limit_hits (
+  bucket_key   text                     NOT NULL,
+  window_start timestamp with time zone NOT NULL,
+  hit_count    integer                  DEFAULT 1 NOT NULL
+);
+
+COMMENT ON TABLE public.rate_limit_hits IS 'Fixed-window rate limiter. bucket_key = "<scope>:<identity>:<window_start_epoch>". Dibersihkan otomatis oleh cleanup_rate_limit_hits via cron.';
+
+ALTER TABLE public.rate_limit_hits
+  ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.rate_limit_hits
+  ADD CONSTRAINT rate_limit_hits_pkey PRIMARY KEY (bucket_key, window_start);
+
+GRANT ALL ON public.rate_limit_hits TO anon;
+
+GRANT ALL ON public.rate_limit_hits TO authenticated;
+
+GRANT ALL ON public.rate_limit_hits TO service_role;
+
+CREATE POLICY rate_limit_hits_deny_all ON public.rate_limit_hits
+  TO anon, authenticated
+  USING (false)
+  WITH CHECK (false);
 
 CREATE TABLE public.saved_signals (
   id              uuid                     DEFAULT gen_random_uuid() NOT NULL,
@@ -6034,7 +7109,7 @@ CREATE TABLE public.session2_setup_previews (
   created_at           timestamp with time zone DEFAULT now() NOT NULL
 );
 
-COMMENT ON TABLE public.session2_setup_previews IS 'Section 4.2 spec v4.2: catatan evaluasi sesi 1 (bukan signal resmi, tidak mempengaruhi lifecycle tabel signals). Dibuat 18 Agustus 2026.';
+COMMENT ON TABLE public.session2_setup_previews IS 'Implementasi AKTIF dari "intraday_evaluation" per spec v5.0 section 12.2 - evaluasi setup non-final untuk sesi 2 (jam 12:10 WIB), bukan signal resmi, tidak mempengaruhi lifecycle tabel signals. Dibuat 18 Agustus 2026, dipakai cron schedule_evaluate_session2_preview.';
 
 ALTER TABLE public.session2_setup_previews
   ENABLE ROW LEVEL SECURITY;
@@ -6168,9 +7243,9 @@ GRANT ALL ON public.signal_pipeline_events TO authenticated;
 
 GRANT ALL ON public.signal_pipeline_events TO service_role;
 
-CREATE INDEX idx_signal_pipeline_events_stock_id ON public.signal_pipeline_events (stock_id);
-
 CREATE INDEX idx_signal_pipeline_events_stage ON public.signal_pipeline_events (stage, status, created_at DESC);
+
+CREATE INDEX idx_signal_pipeline_events_stock_id ON public.signal_pipeline_events (stock_id);
 
 CREATE INDEX idx_signal_pipeline_events_job_run_id ON public.signal_pipeline_events (job_run_id);
 
@@ -6200,7 +7275,10 @@ ALTER TABLE public.signal_results
   ADD CONSTRAINT signal_results_pkey PRIMARY KEY (id);
 
 ALTER TABLE public.signal_results
-  ADD CONSTRAINT signal_results_result_check CHECK (result = ANY (ARRAY['WIN'::text, 'LOSS'::text, 'BREAKEVEN'::text, 'INVALID'::text]));
+  ADD CONSTRAINT signal_results_result_check
+    CHECK (result = ANY (ARRAY['WIN'::text, 'LOSS'::text, 'BREAKEVEN'::text, 'INVALID'::text, 'ARA_ARB_UNFILLED'::text, 'SUPERSEDED_UNRESOLVED'::text]));
+
+COMMENT ON CONSTRAINT signal_results_result_check ON public.signal_results IS 'SUPERSEDED_UNRESOLVED ditambahkan 22 Agustus 2026: sinyal yang di-invalidate karena digantikan sinyal baru (superseded_by terisi), dipisah dari INVALID generik supaya audit bisa bedain "gagal validasi" vs "kegantiin duluan sebelum sempat resolve". Root cause churn-nya masih belum diperbaiki -- ini baru langkah labeling, bukan fix ke generate-signals-mtf.';
 
 ALTER TABLE public.signal_results
   ADD CONSTRAINT signal_results_signal_id_key UNIQUE (signal_id);
@@ -6253,15 +7331,15 @@ GRANT ALL ON public.signal_revisions TO authenticated;
 
 GRANT ALL ON public.signal_revisions TO service_role;
 
-CREATE INDEX idx_signal_revisions_approved_by ON public.signal_revisions (approved_by);
-
-CREATE INDEX idx_signal_revisions_new_signal_id ON public.signal_revisions (new_signal_id);
-
 CREATE INDEX idx_signal_revisions_audit_id ON public.signal_revisions (audit_id);
 
 CREATE INDEX idx_signal_revisions_original_signal_id ON public.signal_revisions (original_signal_id);
 
 CREATE INDEX idx_signal_revisions_requested_by ON public.signal_revisions (requested_by);
+
+CREATE INDEX idx_signal_revisions_new_signal_id ON public.signal_revisions (new_signal_id);
+
+CREATE INDEX idx_signal_revisions_approved_by ON public.signal_revisions (approved_by);
 
 CREATE POLICY signal_revisions_admin_insert ON public.signal_revisions
   FOR INSERT
@@ -6310,9 +7388,9 @@ GRANT ALL ON public.signal_unlocks TO authenticated;
 
 GRANT ALL ON public.signal_unlocks TO service_role;
 
-CREATE INDEX idx_signal_unlocks_stock_id ON public.signal_unlocks (stock_id);
-
 CREATE INDEX idx_signal_unlocks_user_date ON public.signal_unlocks (user_id, unlock_date);
+
+CREATE INDEX idx_signal_unlocks_stock_id ON public.signal_unlocks (stock_id);
 
 CREATE POLICY "own signal unlocks" ON public.signal_unlocks
   FOR SELECT
@@ -6535,22 +7613,27 @@ GRANT SELECT (created_at, direction, id, resolved_at, status, stock_id, supersed
 
 GRANT ALL ON public.signals TO service_role;
 
-CREATE INDEX idx_signals_tp1_zone_id ON public.signals (tp1_zone_id);
-
-CREATE INDEX idx_signals_tp2_zone_id ON public.signals (tp2_zone_id);
+CREATE INDEX idx_signals_superseded_by ON public.signals (superseded_by);
 
 CREATE INDEX idx_signals_tier_status ON public.signals (signal_tier, status)
   WHERE superseded_by IS NULL;
 
+CREATE INDEX idx_signals_tp1_zone_id ON public.signals (tp1_zone_id);
+
 CREATE INDEX idx_signals_stock_tf_status ON public.signals (stock_id, timeframe, status);
+
+CREATE INDEX idx_signals_support_zone_id ON public.signals (support_zone_id);
 
 CREATE INDEX idx_signals_stock_status ON public.signals (stock_id, status);
 
-CREATE INDEX idx_signals_superseded_by ON public.signals (superseded_by);
+CREATE INDEX idx_signals_tp2_zone_id ON public.signals (tp2_zone_id);
 
 CREATE INDEX idx_signals_resistance_zone_id ON public.signals (resistance_zone_id);
 
-CREATE INDEX idx_signals_support_zone_id ON public.signals (support_zone_id);
+CREATE TRIGGER trg_fix_signal_expiry
+  BEFORE INSERT ON public.signals
+  FOR EACH ROW
+  EXECUTE FUNCTION public.fix_signal_expiry_on_insert();
 
 CREATE TRIGGER trg_notify_watchlist_new_signal
   AFTER INSERT ON public.signals
@@ -6666,11 +7749,11 @@ GRANT ALL ON public.stocks TO authenticated;
 
 GRANT ALL ON public.stocks TO service_role;
 
-CREATE INDEX idx_stocks_ticker ON public.stocks (ticker);
+CREATE INDEX idx_stocks_trending_score ON public.stocks (trending_score DESC);
 
 CREATE INDEX idx_stocks_sector_id ON public.stocks (sector_id);
 
-CREATE INDEX idx_stocks_trending_score ON public.stocks (trending_score DESC);
+CREATE INDEX idx_stocks_ticker ON public.stocks (ticker);
 
 CREATE POLICY "stocks readable by all" ON public.stocks
   FOR SELECT
@@ -6793,9 +7876,9 @@ GRANT ALL ON public.structure_zones TO authenticated;
 
 GRANT ALL ON public.structure_zones TO service_role;
 
-CREATE INDEX idx_structure_zones_stock_tf ON public.structure_zones (stock_id, timeframe, zone_type);
-
 CREATE INDEX idx_structure_zones_generated_at ON public.structure_zones (generated_at);
+
+CREATE INDEX idx_structure_zones_stock_tf ON public.structure_zones (stock_id, timeframe, zone_type);
 
 CREATE POLICY "structure_zones readable by all" ON public.structure_zones
   FOR SELECT
@@ -6840,6 +7923,95 @@ CREATE POLICY subscriptions_select ON public.subscriptions
   FOR SELECT
   TO authenticated
   USING ((public.is_current_user_admin() OR (( SELECT auth.uid() AS uid) = user_id)));
+
+CREATE TABLE public.telegram_link_codes (
+  code       text                     NOT NULL,
+  user_id    uuid                     NOT NULL,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  expires_at timestamp with time zone DEFAULT (now() + '00:15:00'::interval) NOT NULL,
+  used_at    timestamp with time zone
+);
+
+COMMENT ON TABLE public.telegram_link_codes IS 'Spec v5.0 section 19: kode sekali pakai (15 menit) buat menghubungkan akun IzyAnalisAi ke chat Telegram user. Alur: user generate kode via RPC generate_telegram_link_code() di app -> user kirim /start <kode> ke bot -> edge function telegram-webhook validasi kode -> insert ke telegram_subscriptions.';
+
+ALTER TABLE public.telegram_link_codes
+  ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.telegram_link_codes
+  ADD CONSTRAINT telegram_link_codes_pkey PRIMARY KEY (code);
+
+ALTER TABLE public.telegram_link_codes
+  ADD CONSTRAINT telegram_link_codes_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
+
+GRANT SELECT ON public.telegram_link_codes TO authenticated;
+
+GRANT ALL ON public.telegram_link_codes TO service_role;
+
+CREATE INDEX idx_telegram_link_codes_user_id ON public.telegram_link_codes (user_id);
+
+CREATE POLICY select_own_link_code ON public.telegram_link_codes
+  FOR SELECT
+  TO authenticated
+  USING ((( SELECT auth.uid() AS uid) = user_id));
+
+CREATE TABLE public.telegram_subscriptions (
+  id           uuid                     DEFAULT gen_random_uuid() NOT NULL,
+  user_id      uuid                     NOT NULL,
+  chat_id      text                     NOT NULL,
+  linked_at    timestamp with time zone DEFAULT now() NOT NULL,
+  is_active    boolean                  DEFAULT true NOT NULL,
+  last_sent_at timestamp with time zone,
+  last_error   text,
+  created_at   timestamp with time zone DEFAULT now() NOT NULL,
+  updated_at   timestamp with time zone DEFAULT now() NOT NULL
+);
+
+COMMENT ON TABLE public.telegram_subscriptions IS 'Spec v5.0 section 19: channel notifikasi Telegram Bot (selain Web Push). Dibuat 20 Agustus 2026. chat_id didapat dari webhook /start bot Telegram, dihubungkan ke user via kode link sekali pakai (link_code di profiles atau tabel terpisah, TBD saat implementasi edge function telegram-webhook).';
+
+ALTER TABLE public.telegram_subscriptions
+  ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.telegram_subscriptions
+  ADD CONSTRAINT telegram_subscriptions_pkey PRIMARY KEY (id);
+
+ALTER TABLE public.telegram_subscriptions
+  ADD CONSTRAINT telegram_subscriptions_user_id_chat_id_key UNIQUE (user_id, chat_id);
+
+ALTER TABLE public.telegram_subscriptions
+  ADD CONSTRAINT telegram_subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
+
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.telegram_subscriptions TO authenticated;
+
+GRANT ALL ON public.telegram_subscriptions TO service_role;
+
+CREATE INDEX idx_telegram_subscriptions_user_active ON public.telegram_subscriptions (user_id)
+  WHERE is_active = true;
+
+CREATE TRIGGER trg_telegram_subscriptions_updated_at
+  BEFORE UPDATE ON public.telegram_subscriptions
+  FOR EACH ROW
+  EXECUTE FUNCTION public.set_updated_at();
+
+CREATE POLICY delete_own_telegram_subscription ON public.telegram_subscriptions
+  FOR DELETE
+  TO authenticated
+  USING ((( SELECT auth.uid() AS uid) = user_id));
+
+CREATE POLICY insert_own_telegram_subscription ON public.telegram_subscriptions
+  FOR INSERT
+  TO authenticated
+  WITH CHECK ((( SELECT auth.uid() AS uid) = user_id));
+
+CREATE POLICY select_own_telegram_subscription ON public.telegram_subscriptions
+  FOR SELECT
+  TO authenticated
+  USING ((( SELECT auth.uid() AS uid) = user_id));
+
+CREATE POLICY update_own_telegram_subscription ON public.telegram_subscriptions
+  FOR UPDATE
+  TO authenticated
+  USING ((( SELECT auth.uid() AS uid) = user_id))
+  WITH CHECK ((( SELECT auth.uid() AS uid) = user_id));
 
 CREATE TABLE public.token_transactions (
   id             uuid                     DEFAULT gen_random_uuid() NOT NULL,
@@ -7234,6 +8406,9 @@ GRANT ALL ON public.signals_public TO anon;
 GRANT ALL ON public.signals_public TO authenticated;
 
 GRANT ALL ON public.signals_public TO service_role;
+
+COMMENT ON TRIGGER trg_fix_signal_expiry ON public.signals IS 'Safety net: override expires_at kalau di-set terlalu pendek (< 12 jam dari sekarang).
+   Ini handle kasus generate-signals-mtf masih pakai hardcode 15:30 WIB hari yang sama.';
 
 CREATE EVENT TRIGGER ensure_rls
   ON ddl_command_end
