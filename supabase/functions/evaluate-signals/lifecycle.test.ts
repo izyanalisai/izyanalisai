@@ -5,9 +5,14 @@
 // Jalankan: deno test lifecycle.test.ts
 
 import { assertEquals } from 'https://deno.land/std@0.203.0/assert/mod.ts';
-import { classifySignalStatus } from './logic.ts';
+import { classifySignalStatus, type EvaluatedSignal } from './logic.ts';
 
-function buySignal(overrides = {}) {
+// FIX (25 Agustus 2026, CI run kedua): setelah logic.ts diketikkan (EvaluatedSignal,
+// direction: 'BUY'|'SELL'), object literal polos di sini otomatis di-infer TypeScript
+// sebagai `direction: string` (lebar), bukan union literal -- gagal type-check
+// TS2345. Helper di bawah sekarang eksplisit ber-tipe Partial<EvaluatedSignal> &
+// { status: string } supaya field `direction` tetap sempit ke 'BUY'/'SELL'.
+function buySignal(overrides: Partial<EvaluatedSignal> = {}): EvaluatedSignal {
   return {
     direction: 'BUY',
     status: 'ACTIVE',
@@ -19,7 +24,7 @@ function buySignal(overrides = {}) {
   };
 }
 
-function sellSignal(overrides = {}) {
+function sellSignal(overrides: Partial<EvaluatedSignal> = {}): EvaluatedSignal {
   return {
     direction: 'SELL',
     status: 'ACTIVE',
