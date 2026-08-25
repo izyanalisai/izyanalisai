@@ -1,10 +1,13 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { verifyMidtransSignature, resolvePaymentStatus } from './signature.ts';
+import { verifyMidtransSignature } from './signature.ts';
+import { processMidtransEvent, type WebhookDeps } from './webhook-logic.ts';
 // Webhook publik dari Midtrans. Auth-nya BUKAN dari JWT Supabase,
 // tapi dari signature_key yang divalidasi manual di bawah.
-// Logic signature & status resolution di-extract ke signature.ts (25 Agustus 2026,
-// spec v6.1 section 4 prioritas #2 butir 2) supaya bisa dites otomatis lewat
-// `deno test` tanpa perlu spin up server -- lihat signature.test.ts.
+// Logic signature & status resolution di-extract ke signature.ts, dan logic
+// idempotency/orkestrasi payment_events+payments ke webhook-logic.ts (25 Agustus
+// 2026, spec v6.1 section 4 prioritas #2 butir 2) supaya bisa dites otomatis
+// lewat `deno test` tanpa perlu spin up server -- lihat signature.test.ts dan
+// webhook-logic.test.ts.
 Deno.serve(async (req)=>{
   if (req.method !== 'POST') {
     return new Response('METHOD_NOT_ALLOWED', {
@@ -20,11 +23,7 @@ Deno.serve(async (req)=>{
     });
   }
   const orderId = String(body.order_id ?? '');
-  const statusCode = String(body.status_code ?? '');
-  const grossAmount = String(body.gross_amount ?? '');
   const signatureKey = String(body.signature_key ?? '');
-  const transactionStatus = String(body.transaction_status ?? '');
-  const fraudStatus = String(body.fraud_status ?? '');
   const transactionId = String(body.transaction_id ?? '');
   if (!orderId || !signatureKey || !transactionId) {
     return new Response('MISSING_FIELDS', {
@@ -40,7 +39,8 @@ Deno.serve(async (req)=>{
       status: 500
     });
   }
-  // Verifikasi signature: sha512(order_id + status_code + gross_amount + ServerKey)
+  const statusCode = String(body.status_code ?? '');
+  const grossAmount = String(body.gross_amount ?? '');
   const signatureValid = await verifyMidtransSignature({
     orderId,
     statusCode,
@@ -54,63 +54,37 @@ Deno.serve(async (req)=>{
       status: 403
     });
   }
-  // Idempotency: transaction_id Midtrans cuma diproses sekali
-  const { error: eventInsertErr } = await admin.from('payment_events').insert({
-    external_event_id: transactionId,
-    payload: body
-  });
-  if (eventInsertErr) {
-    // unique violation = sudah pernah diproses, aman untuk return 200 (idempotent)
-    if (eventInsertErr.code === '23505') {
-      return new Response('OK (already processed)', {
-        status: 200
+
+  const deps: WebhookDeps = {
+    async insertEvent(txId, payload) {
+      const { error } = await admin.from('payment_events').insert({
+        external_event_id: txId,
+        payload
       });
+      return { error: error ? { code: error.code } : null };
+    },
+    async findPaymentByOrderId(oid) {
+      const { data } = await admin.from('payments').select('id, status').eq('external_payment_id', oid).maybeSingle();
+      return data ?? null;
+    },
+    async updatePaymentStatus(paymentId, status) {
+      await admin.from('payments').update({ status }).eq('id', paymentId);
+    },
+    async activateSubscription(paymentId) {
+      const { error } = await admin.rpc('activate_subscription_from_payment', { p_payment_id: paymentId });
+      return { error };
+    },
+    async markEventProcessed(txId) {
+      await admin.from('payment_events').update({ processed_at: new Date().toISOString() }).eq('external_event_id', txId);
+    },
+    async deleteEvent(txId) {
+      await admin.from('payment_events').delete().eq('external_event_id', txId);
     }
-    console.error('gagal insert payment_events', eventInsertErr);
-    return new Response('DB_ERROR', {
-      status: 500
-    });
+  };
+
+  const outcome = await processMidtransEvent(body, deps);
+  if (outcome.body === 'ACTIVATION_ERROR') {
+    console.error('gagal aktivasi subscription untuk order_id', orderId);
   }
-  const { data: payment } = await admin.from('payments').select('id, status').eq('external_payment_id', orderId).maybeSingle();
-  if (!payment) {
-    console.error('payment tidak ditemukan untuk order_id', orderId);
-    return new Response('PAYMENT_NOT_FOUND', {
-      status: 404
-    });
-  }
-  const newStatus = resolvePaymentStatus({
-    transactionStatus,
-    fraudStatus
-  });
-  if (newStatus) {
-    await admin.from('payments').update({
-      status: newStatus
-    }).eq('id', payment.id);
-  }
-  if (newStatus === 'success' && payment.status !== 'success') {
-    const { error: activateErr } = await admin.rpc('activate_subscription_from_payment', {
-      p_payment_id: payment.id
-    });
-    if (activateErr) {
-      console.error('gagal aktivasi subscription', activateErr);
-      // FIX 23 Agustus 2026 (celah desain dari audit 22 Agustus): payment_events
-      // sudah terlanjur diinsert SEBELUM RPC ini dipanggil (untuk idempotency
-      // terhadap request paralel). Kalau RPC gagal di sini dan row itu
-      // dibiarkan, retry webhook berikutnya dari Midtrans akan short-circuit
-      // di pengecekan unique constraint di atas dan TIDAK PERNAH mencoba lagi
-      // aktivasi -- payment permanen sukses tapi subscription tidak pernah
-      // aktif, tanpa recovery otomatis. Hapus lagi row payment_events supaya
-      // retry Midtrans berikutnya bisa mencoba dari awal.
-      await admin.from('payment_events').delete().eq('external_event_id', transactionId);
-      return new Response('ACTIVATION_ERROR', {
-        status: 500
-      });
-    }
-  }
-  await admin.from('payment_events').update({
-    processed_at: new Date().toISOString()
-  }).eq('external_event_id', transactionId);
-  return new Response('OK', {
-    status: 200
-  });
+  return new Response(outcome.body, { status: outcome.status });
 });
