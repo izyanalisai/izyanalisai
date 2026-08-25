@@ -1,11 +1,10 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { verifyMidtransSignature, resolvePaymentStatus } from './signature.ts';
 // Webhook publik dari Midtrans. Auth-nya BUKAN dari JWT Supabase,
 // tapi dari signature_key yang divalidasi manual di bawah.
-async function sha512Hex(input) {
-  const data = new TextEncoder().encode(input);
-  const hashBuffer = await crypto.subtle.digest('SHA-512', data);
-  return Array.from(new Uint8Array(hashBuffer)).map((b)=>b.toString(16).padStart(2, '0')).join('');
-}
+// Logic signature & status resolution di-extract ke signature.ts (25 Agustus 2026,
+// spec v6.1 section 4 prioritas #2 butir 2) supaya bisa dites otomatis lewat
+// `deno test` tanpa perlu spin up server -- lihat signature.test.ts.
 Deno.serve(async (req)=>{
   if (req.method !== 'POST') {
     return new Response('METHOD_NOT_ALLOWED', {
@@ -42,8 +41,14 @@ Deno.serve(async (req)=>{
     });
   }
   // Verifikasi signature: sha512(order_id + status_code + gross_amount + ServerKey)
-  const expectedSignature = await sha512Hex(orderId + statusCode + grossAmount + serverKey);
-  if (expectedSignature !== signatureKey) {
+  const signatureValid = await verifyMidtransSignature({
+    orderId,
+    statusCode,
+    grossAmount,
+    serverKey,
+    signatureKey
+  });
+  if (!signatureValid) {
     console.error('signature mismatch untuk order_id', orderId);
     return new Response('INVALID_SIGNATURE', {
       status: 403
@@ -73,19 +78,10 @@ Deno.serve(async (req)=>{
       status: 404
     });
   }
-  let newStatus = null;
-  if (transactionStatus === 'capture' && fraudStatus === 'accept' || transactionStatus === 'settlement') {
-    newStatus = 'success';
-  } else if (transactionStatus === 'pending') {
-    newStatus = 'pending';
-  } else if ([
-    'deny',
-    'cancel',
-    'expire',
-    'failure'
-  ].includes(transactionStatus)) {
-    newStatus = transactionStatus === 'expire' ? 'expired' : 'failed';
-  }
+  const newStatus = resolvePaymentStatus({
+    transactionStatus,
+    fraudStatus
+  });
   if (newStatus) {
     await admin.from('payments').update({
       status: newStatus
