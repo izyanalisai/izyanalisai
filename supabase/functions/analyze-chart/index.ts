@@ -70,12 +70,15 @@ function parseVisionJSON(raw) {
     };
   }
 }
-async function callVisionProvider(providerLabel, baseUrl, apiKey, models, imageBase64, mime, extraHeaders = {}) {
+async function callVisionProvider(providerLabel, baseUrl, apiKey, models, imageBase64, mime, perModelTimeoutMs = 20000, extraHeaders = {}) {
   let lastError = null;
   for (const model of models){
+    const controller = new AbortController();
+    const timeoutId = setTimeout(()=>controller.abort(), perModelTimeoutMs);
     try {
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
+        signal: controller.signal,
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
@@ -108,6 +111,7 @@ async function callVisionProvider(providerLabel, baseUrl, apiKey, models, imageB
           stream: false
         })
       });
+      clearTimeout(timeoutId);
       if (res.status === 429 || res.status === 402) {
         lastError = await res.text();
         continue;
@@ -136,7 +140,8 @@ async function callVisionProvider(providerLabel, baseUrl, apiKey, models, imageB
         modelUsed: `${providerLabel}:${model}`
       };
     } catch (err) {
-      lastError = err;
+      clearTimeout(timeoutId);
+      lastError = err?.name === 'AbortError' ? `timeout setelah ${perModelTimeoutMs}ms (model: ${model})` : err;
       continue;
     }
   }
@@ -198,13 +203,13 @@ async function callVision(imageBytes, imageBase64, mime, creds) {
     }
   }
   try {
-    return await callVisionProvider('9router', nineRouterBaseUrl, nineRouterKey, NINEROUTER_VISION_MODELS, imageBase64, mime);
+    return await callVisionProvider('9router', nineRouterBaseUrl, nineRouterKey, NINEROUTER_VISION_MODELS, imageBase64, mime, 25000);
   } catch (nineRouterErr) {
     const openRouterKey = Deno.env.get('OPENROUTER_API_KEY');
     if (!openRouterKey) throw cfErr ?? nineRouterErr;
     try {
       const baseUrl = Deno.env.get('AI_BASE_URL') || 'https://openrouter.ai/api/v1';
-      return await callVisionProvider('openrouter', baseUrl, openRouterKey, FREE_VISION_MODELS, imageBase64, mime, {
+      return await callVisionProvider('openrouter', baseUrl, openRouterKey, FREE_VISION_MODELS, imageBase64, mime, 15000, {
         'HTTP-Referer': 'https://izyanalisai.vercel.app',
         'X-Title': 'IzyAnalisAI Chart Analysis'
       });
