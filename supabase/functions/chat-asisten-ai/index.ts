@@ -97,12 +97,15 @@ function parseSSEToContent(raw) {
     usage
   };
 }
-async function callProvider(providerLabel, baseUrl, apiKey, models, messages, extraHeaders = {}) {
+async function callProvider(providerLabel, baseUrl, apiKey, models, messages, perModelTimeoutMs = 20000, extraHeaders = {}) {
   let lastError = null;
   for (const model of models){
+    const controller = new AbortController();
+    const timeoutId = setTimeout(()=>controller.abort(), perModelTimeoutMs);
     try {
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
+        signal: controller.signal,
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
@@ -115,6 +118,7 @@ async function callProvider(providerLabel, baseUrl, apiKey, models, messages, ex
           stream: false
         })
       });
+      clearTimeout(timeoutId);
       if (res.status === 429 || res.status === 402) {
         lastError = await res.text();
         console.error(`[chat-asisten-ai] [${providerLabel}] model ${model} gagal (${res.status}): ${lastError}`);
@@ -154,7 +158,8 @@ async function callProvider(providerLabel, baseUrl, apiKey, models, messages, ex
         }
       };
     } catch (err) {
-      lastError = err;
+      clearTimeout(timeoutId);
+      lastError = err?.name === 'AbortError' ? `timeout setelah ${perModelTimeoutMs}ms (model: ${model})` : err;
       console.error(`[chat-asisten-ai] [${providerLabel}] model ${model} exception:`, err);
       continue;
     }
@@ -230,7 +235,7 @@ async function callAIChain(messages, hasImage, creds) {
     }
   }
   try {
-    return await callProvider('9router', nineRouterBaseUrl, nineRouterKey, NINEROUTER_MODELS, messages);
+    return await callProvider('9router', nineRouterBaseUrl, nineRouterKey, NINEROUTER_MODELS, messages, 20000);
   } catch (nineRouterErr) {
     console.error('[chat-asisten-ai] tier 2 (9router) gagal total, coba tier 3 (openrouter):', nineRouterErr);
     const openRouterKey = Deno.env.get('OPENROUTER_API_KEY');
@@ -240,7 +245,7 @@ async function callAIChain(messages, hasImage, creds) {
     }
     try {
       const baseUrl = Deno.env.get('AI_BASE_URL') || 'https://openrouter.ai/api/v1';
-      return await callProvider('openrouter', baseUrl, openRouterKey, OPENROUTER_FREE_MODELS, messages, {
+      return await callProvider('openrouter', baseUrl, openRouterKey, OPENROUTER_FREE_MODELS, messages, 15000, {
         'HTTP-Referer': 'https://izyanalisai.vercel.app',
         'X-Title': 'IzyAnalisAI Chat'
       });
