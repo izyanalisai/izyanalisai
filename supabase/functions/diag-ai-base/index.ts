@@ -84,13 +84,20 @@ Deno.serve(async (_req) => {
             signal: AbortSignal.timeout(10000),
           },
         );
-        const data = await res.json().catch(() => null);
+        const rawText = await res.text();
+        const data = (() => {
+          try {
+            return JSON.parse(rawText);
+          } catch {
+            return null;
+          }
+        })();
         const ok = res.ok && data?.success !== false && !!data?.result?.response;
         results.push({
           model,
           http_status: res.status,
           ok,
-          error: ok ? null : (data?.errors ?? (await res.text().catch(() => 'unknown'))),
+          error: ok ? null : (data?.errors ?? rawText.slice(0, 500) ?? 'unknown'),
         });
       } catch (err) {
         results.push({ model, ok: false, error: String(err) });
