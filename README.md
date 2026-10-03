@@ -8,7 +8,7 @@ The repository includes authentication/onboarding, risk profiles, stock detail p
 
 ## Local setup
 
-Use Node.js 20.19+ (or a supported newer LTS version).
+Use Node.js 24 LTS, matching CI and the Cloudflare build environment. The installed Supabase and Cloudflare tooling requires Node.js 22 or newer.
 
 ```bash
 npm ci
