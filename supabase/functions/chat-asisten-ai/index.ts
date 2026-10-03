@@ -1,3 +1,4 @@
+import { callSelectedAI, hasSelectedProvider } from '../_shared/ai-provider.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 // Worker Chat - Asisten AI
 // AI Gateway auto-failover chain (spec Section 2.5 / 12.1), diupdate 23 Agustus 2026:
@@ -220,6 +221,7 @@ async function callCloudflare(accountId, apiToken, models, messages, perModelTim
   throw new Error(`[cloudflare] semua model gagal: ${JSON.stringify(lastError)}`);
 }
 async function callAIChain(messages, hasImage, creds) {
+  if (hasSelectedProvider()) return await callSelectedAI(messages, { vision: hasImage });
   const { cfAccountId, cfApiToken, nineRouterKey, nineRouterBaseUrl } = creds;
   let cfErr = null;
   // Cloudflare tier di-skip kalau ada gambar di percakapan ini -- model chat CF yang
@@ -284,7 +286,7 @@ Deno.serve(async (req)=>{
       cfAccountId = cfAccountId || nrMap['cloudflare_account_id'];
       cfApiToken = cfApiToken || nrMap['cloudflare_api_token'];
     }
-    if ((!nineRouterKey || !nineRouterBaseUrl) && (!cfAccountId || !cfApiToken)) {
+    if (!hasSelectedProvider() && (!nineRouterKey || !nineRouterBaseUrl) && (!cfAccountId || !cfApiToken)) {
       console.error('[chat-asisten-ai] Tidak ada provider AI yang terkonfigurasi (Cloudflare & 9router kosong dua-duanya)');
       return new Response(JSON.stringify({
         error: 'Tidak ada provider AI yang terkonfigurasi (env atau internal_secrets)'

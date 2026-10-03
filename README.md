@@ -39,3 +39,23 @@ Edge-function tests are configured in `.github/workflows/test-edge-functions.yml
 The existing workflows use Cloudflare and Supabase secrets. Do not commit `.env.local` or secret values. Cookie-based middleware routes anonymous users to the landing page and checks admin profiles, while preserving session refresh/clear cookies on redirects. Supabase RLS and individual edge-function authentication must enforce data access; frontend routing alone is not an authorization boundary.
 
 This project is suitable for describing implemented AI application integration in a portfolio. No claim of audited trading accuracy, investment returns, or production readiness is made here.
+
+## Select OpenAI / xAI Grok for AI features
+
+Set **server-side Supabase Edge Function secrets**, not frontend `NEXT_PUBLIC_*` variables:
+
+| Provider | Required secrets/configuration |
+| --- | --- |
+| OpenAI | `AI_PROVIDER=openai`, `AI_MODEL=<available-model-id>`, `OPENAI_API_KEY=<server-secret>` |
+| xAI/Grok | `AI_PROVIDER=xai`, `AI_MODEL=<available-model-id>`, `XAI_API_KEY=<server-secret>` |
+| Compatible gateway | `AI_PROVIDER=compatible`, `AI_MODEL=<model-id>`, `AI_API_KEY=<server-secret>`, `AI_PROVIDER_BASE_URL=<https-api-base>` |
+
+Set `AI_VISION_MODEL` separately to an image-capable model for chart analysis and chat with images. A text-model setting alone does not enable vision. Choose model IDs available to your provider account; no paid model is auto-selected.
+
+The shared adapter is connected to `chat-asisten-ai`, `analyze-chart`, `generate-signal-reasoning`, `generate-trending-reason`, and `fetch-news`. If `AI_PROVIDER` is unset or `legacy`, the existing Cloudflare/9Router/OpenRouter chain is retained. Selecting a cloud provider sends one request to that provider without silently retrying or falling back to another paid provider. Errors continue through each feature's existing error/refund handling.
+
+Optional controls: `AI_MAX_TOKENS` (default 2048, maximum 16384), `AI_TIMEOUT_MS` (default 30000), and `AI_TOKEN_PARAMETER` (`max_tokens` or `max_completion_tokens`). Temperature is omitted. OpenAI uses the official OpenAI API origin; xAI uses `https://api.x.ai/v1`. Use `compatible` for custom HTTPS gateways. The API base is normalized without duplicating `/v1`.
+
+Provider tests validate endpoint/key selection, model configuration, payloads, usage parsing, bounded single requests, and rejection of refused/truncated outputs using mocked HTTP. Live model quality, chart accuracy, and Supabase deployment still need actual credentials and integration tests. The existing deterministic signal-engine rules remain authoritative for price levels; model-generated text does not replace them.
+
+References: [OpenAI API](https://developers.openai.com/api/docs/guides/structured-outputs), [xAI API](https://docs.x.ai/developers/model-capabilities/text/structured-outputs).

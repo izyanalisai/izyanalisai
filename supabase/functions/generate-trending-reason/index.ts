@@ -1,3 +1,4 @@
+import { callSelectedAI, hasSelectedProvider } from '../_shared/ai-provider.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 // Worker Trending Score - generate 1-2 kalimat alasan kenapa saham lagi trending.
 // URUTAN PROVIDER (diupdate 24 Agustus 2026, migrasi ke Cloudflare -- menyamakan
@@ -204,6 +205,12 @@ async function callCloudflare(accountId, apiToken, models, prompt, perModelTimeo
   throw new Error(`[cloudflare] semua model gagal: ${JSON.stringify(lastError)}`);
 }
 async function callAIChain(prompt, creds) {
+  if (hasSelectedProvider()) {
+    const result = await callSelectedAI([{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: prompt }]);
+    const text = sanitizeReply(result.text);
+    if (!text) throw new Error('AI response is empty after sanitization');
+    return { ...result, text };
+  }
   const { cfAccountId, cfApiToken, nineRouterKey, nineRouterBaseUrl, nineRouterModels } = creds;
   let cfErr = null;
   if (cfAccountId && cfApiToken) {
@@ -281,7 +288,7 @@ Deno.serve(async (req)=>{
   const NINEROUTER_MODELS = [
     nineRouterModel || 'auto'
   ];
-  if ((!nineRouterKey || !nineRouterBaseUrl) && (!cfAccountId || !cfApiToken)) {
+  if (!hasSelectedProvider() && (!nineRouterKey || !nineRouterBaseUrl) && (!cfAccountId || !cfApiToken)) {
     console.error('[generate-trending-reason] Tidak ada provider AI yang terkonfigurasi (Cloudflare & 9router kosong dua-duanya)');
     return new Response(JSON.stringify({
       error: 'Tidak ada provider AI yang terkonfigurasi (env atau internal_secrets)'

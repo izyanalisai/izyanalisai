@@ -1,3 +1,4 @@
+import { callSelectedAI, hasSelectedProvider } from '../_shared/ai-provider.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { Image } from 'https://deno.land/x/imagescript@1.2.15/mod.ts';
 // URUTAN PROVIDER (diupdate 23 Agustus 2026, migrasi ke Cloudflare):
@@ -192,6 +193,16 @@ async function callCloudflareVision(accountId, apiToken, imageBytes, perModelTim
   }
 }
 async function callVision(imageBytes, imageBase64, mime, creds) {
+  if (hasSelectedProvider()) {
+    const result = await callSelectedAI([
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: [
+        { type: 'text', text: 'Analisa chart saham berikut dan jawab dalam JSON.' },
+        { type: 'image_url', image_url: { url: `data:${mime};base64,${imageBase64}` } }
+      ] }
+    ], { vision: true, json: true });
+    return { ...parseVisionJSON(result.text), modelUsed: result.modelUsed };
+  }
   const { cfAccountId, cfApiToken, nineRouterKey, nineRouterBaseUrl } = creds;
   let cfErr = null;
   if (cfAccountId && cfApiToken) {
@@ -241,7 +252,7 @@ Deno.serve(async (req)=>{
       cfAccountId = cfAccountId || nrMap['cloudflare_account_id'];
       cfApiToken = cfApiToken || nrMap['cloudflare_api_token'];
     }
-    if ((!nineRouterKey || !nineRouterBaseUrl) && (!cfAccountId || !cfApiToken)) {
+    if (!hasSelectedProvider() && (!nineRouterKey || !nineRouterBaseUrl) && (!cfAccountId || !cfApiToken)) {
       console.error('[analyze-chart] Tidak ada provider AI yang terkonfigurasi (Cloudflare & 9router kosong dua-duanya)');
       return new Response(JSON.stringify({
         error: 'Tidak ada provider AI yang terkonfigurasi (env atau internal_secrets)'
