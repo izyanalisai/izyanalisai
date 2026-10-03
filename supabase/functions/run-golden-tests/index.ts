@@ -305,8 +305,6 @@ function computeSignal(tier, entryPrice, structEntry, structBias, entryCandles) 
     const brokenSupportZone = structEntry.supportZones.filter((z)=>z.price_low > entryPrice).reduce((best, z)=>!best || z.price_low < best.price_low ? z : best, null);
     const breakdownState = brokenSupportZone ? classifyTrigger(entryCandles, brokenSupportZone, 'BREAKDOWN') : null;
     const resistanceTriggerState = classifyTrigger(entryCandles, resistanceZone, 'BREAKOUT');
-    const lastCandle = entryCandles[entryCandles.length - 1];
-    const vol20 = null; // volume_avg20 tidak dipakai untuk klasifikasi utama kecuali DISTRIBUTION_INDICATION
     let bearishType;
     if (breakdownState === 'BREAKDOWN_CONFIRMED' || breakdownState === 'BREAKDOWN_RETEST') bearishType = 'BEARISH_BREAKDOWN';
     else if (resistanceTriggerState === 'FAILED_BREAKOUT') bearishType = 'BEARISH_REJECTION';

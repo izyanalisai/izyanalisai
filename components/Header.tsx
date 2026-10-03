@@ -9,7 +9,8 @@ import { NO_SHELL_PREFIXES } from './BottomNav'
 export default function Header() {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
-  const [tokenBalance, setTokenBalance] = useState<number | null>(null)
+  const [wallet, setWallet] = useState<{ userId: string; balance: number } | null>(null)
+  const tokenBalance = wallet?.userId === user?.id ? wallet?.balance : null
   const router = useRouter()
   const pathname = usePathname()
   const [supabase] = useState(() => createClient())
@@ -30,10 +31,7 @@ export default function Header() {
   }, [supabase])
 
   useEffect(() => {
-    if (!user) {
-      setTokenBalance(null)
-      return
-    }
+    if (!user) return
     let cancelled = false
     supabase
       .from('token_wallets')
@@ -41,7 +39,7 @@ export default function Header() {
       .eq('user_id', user.id)
       .maybeSingle()
       .then(({ data }) => {
-        if (!cancelled) setTokenBalance(data?.balance ?? 0)
+        if (!cancelled) setWallet({ userId: user.id, balance: data?.balance ?? 0 })
       })
     return () => {
       cancelled = true

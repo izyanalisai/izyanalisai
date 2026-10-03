@@ -59,11 +59,19 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
+  // Supabase may rotate or clear cookies during getUser(). Preserve them on redirects.
+  const redirectWithCookies = (pathname: string) => {
+    const url = request.nextUrl.clone()
+    url.pathname = pathname
+    url.search = ''
+    const redirect = NextResponse.redirect(url)
+    response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie))
+    return redirect
+  }
+
   // Redirect ke landing kalau belum login
   if (!user) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/landing'
-    return NextResponse.redirect(url)
+    return redirectWithCookies('/landing')
   }
 
   // Protect /admin route
@@ -75,9 +83,7 @@ export async function middleware(request: NextRequest) {
       .maybeSingle()
 
     if (!profile?.is_admin) {
-      const url = request.nextUrl.clone()
-      url.pathname = '/'
-      return NextResponse.redirect(url)
+      return redirectWithCookies('/')
     }
   }
 
