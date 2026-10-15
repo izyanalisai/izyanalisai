@@ -1,5 +1,6 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { decidePaymentRateLimit } from './rate-limit-guard.ts';
+import { requestSnap } from './snap-request.ts';
 // FIX (audit 18 Agustus 2026): harga disesuaikan ke Rp59.000 sesuai Section 10.3 &
 // 26.1 poin 22 di spec v4.2 (grandfathered) -- sebelumnya masih placeholder 49.000
 // (komentar lama: "NOTE: Harga placeholder, WAJIB disesuaikan tim sebelum go-live").
@@ -83,6 +84,11 @@ Deno.serve(async (req)=>{
       status: 400
     });
   }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return new Response(JSON.stringify({ error: 'INVALID_BODY' }), {
+      status: 400, headers: { 'Content-Type': 'application/json' },
+    });
+  }
   const method = body.method ?? '';
   if (!METHOD_TO_MIDTRANS[method]) {
     return new Response(JSON.stringify({
@@ -125,44 +131,42 @@ Deno.serve(async (req)=>{
   }
   const snapBase = isProduction ? 'https://app.midtrans.com/snap/v1/transactions' : 'https://app.sandbox.midtrans.com/snap/v1/transactions';
   const authB64 = btoa(`${serverKey}:`);
-  const snapRes = await fetch(snapBase, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Basic ${authB64}`
-    },
-    body: JSON.stringify({
-      transaction_details: {
-        order_id: orderId,
-        gross_amount: PREMIUM_MONTHLY_PRICE_IDR
-      },
-      enabled_payments: METHOD_TO_MIDTRANS[method],
-      customer_details: {
-        email: user.email
-      }
-    })
-  });
-  const snapJson = await snapRes.json();
-  if (!snapRes.ok) {
-    await admin.from('payments').update({
-      status: 'failed'
-    }).eq('id', payment.id);
-    return new Response(JSON.stringify({
-      error: 'MIDTRANS_ERROR',
-      detail: snapJson
-    }), {
-      status: 502
+  const outcome = await requestSnap(
+    snapBase, authB64, orderId, PREMIUM_MONTHLY_PRICE_IDR,
+    METHOD_TO_MIDTRANS[method], user.email,
+  );
+  if (outcome.kind === 'rejected') {
+    const { error: failureWriteError } = await admin.from('payments')
+      .update({ status: 'failed' }).eq('id', payment.id);
+    if (failureWriteError) {
+      console.error('[create-payment] failed to record rejected provider order');
+      return new Response(JSON.stringify({ error: 'PAYMENT_STATE_UNAVAILABLE', order_id: orderId }), {
+        status: 503, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ error: 'MIDTRANS_REJECTED', order_id: orderId }), {
+      status: 502, headers: { 'Content-Type': 'application/json' },
     });
+  }
+  if (outcome.kind === 'unknown') {
+    // The provider might have created this order before a timeout or 5xx.
+    // Keep its ID and pending state for provider reconciliation. Do not
+    // prematurely mark it failed, or silently make another charge.
+    console.error('[create-payment] provider outcome unknown; order requires reconciliation');
+    return new Response(JSON.stringify({
+      error: 'PAYMENT_STATUS_UNKNOWN',
+      payment_id: payment.id,
+      order_id: orderId,
+      retry_instruction: 'Check the existing order status before creating another payment',
+    }), { status: 503, headers: { 'Content-Type': 'application/json', 'Retry-After': '30' } });
   }
   return new Response(JSON.stringify({
     payment_id: payment.id,
     order_id: orderId,
     amount: PREMIUM_MONTHLY_PRICE_IDR,
-    snap_token: snapJson.token,
-    redirect_url: snapJson.redirect_url
+    snap_token: outcome.token,
+    redirect_url: outcome.redirect_url,
   }), {
-    headers: {
-      'Content-Type': 'application/json'
-    }
+    headers: { 'Content-Type': 'application/json' },
   });
 });
