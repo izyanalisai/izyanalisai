@@ -89,7 +89,13 @@ export async function processMidtransEvent(body: WebhookBody, deps: WebhookDeps)
     return { status: 500, body: 'DB_ERROR', activationCalled: false };
   }
 
-  const payment = await deps.findPaymentByOrderId(orderId);
+  let payment: PaymentRow | null;
+  try {
+    payment = await deps.findPaymentByOrderId(orderId);
+  } catch {
+    await deps.deleteEvent(eventKey);
+    return { status: 500, body: 'DB_ERROR', activationCalled: false };
+  }
   if (!payment) {
     // Release the unique event claim so an eventual payment row can retry.
     await deps.deleteEvent(eventKey);
