@@ -77,3 +77,37 @@ describe('session redirect cookies', () => {
     expect(mocks.createServerClient).not.toHaveBeenCalled()
   })
 })
+
+
+describe('onboarding failure handling', () => {
+  it('signs out and redirects safely if onboarding queries fail', async () => {
+    const signOut = vi.fn(async () => ({ error: null }))
+    mocks.createServerClient.mockImplementation((_url, _key, options) => ({
+      auth: {
+        exchangeCodeForSession: async () => ({ data: { user: { id: 'u1' } }, error: null }),
+        signOut: async () => {
+          options.cookies.setAll([{ name: 'session', value: '', options: { path: '/', maxAge: 0 } }])
+          return signOut()
+        },
+      },
+    }))
+    mocks.postLogin.mockRejectedValue(new Error('test-only database unavailable'))
+    const response = await GET(new NextRequest('https://example.com/auth/callback?code=test'))
+    expect(response.headers.get('location')).toBe('https://example.com/login?error=onboarding_unavailable')
+    expect(response.cookies.get('session')?.value).toBe('')
+    expect(signOut).toHaveBeenCalledOnce()
+    expect(response.headers.get('location')).not.toContain('database')
+  })
+
+  it('does not proceed to the application if sign-out also fails', async () => {
+    mocks.createServerClient.mockImplementation(() => ({
+      auth: {
+        exchangeCodeForSession: async () => ({ data: { user: { id: 'u1' } }, error: null }),
+        signOut: async () => { throw new Error('test-only sign-out error') },
+      },
+    }))
+    mocks.postLogin.mockRejectedValue(new Error('test-only profile outage'))
+    const response = await GET(new NextRequest('https://example.com/auth/callback?code=test'))
+    expect(response.headers.get('location')).toBe('https://example.com/login?error=onboarding_unavailable')
+  })
+})

@@ -41,8 +41,18 @@ export async function GET(request: NextRequest) {
     const { data, error } = await supabase.auth.exchangeCodeForSession(code)
 
     if (!error && data.user) {
-      const path = await getPostLoginPath(supabase, data.user.id)
-      return redirectWithCookies(path)
+      try {
+        const path = await getPostLoginPath(supabase, data.user.id)
+        return redirectWithCookies(path)
+      } catch {
+        // Fail closed if profile/terms cannot be verified; preserve sign-out cookies.
+        try {
+          await supabase.auth.signOut()
+        } catch {
+          // A failed sign-out must not turn a verification error into success.
+        }
+        return redirectWithCookies('/login?error=onboarding_unavailable')
+      }
     }
   }
 

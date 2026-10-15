@@ -8,11 +8,13 @@ export async function getPostLoginPath(
   supabase: SupabaseClient,
   userId: string
 ): Promise<string> {
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('risk_profile, deleted_at')
     .eq('id', userId)
     .maybeSingle()
+
+  if (profileError) throw new Error('POST_LOGIN_PROFILE_UNAVAILABLE')
 
   // Akun yang sudah minta hapus akun tidak boleh dipakai login lagi,
   // meski masih dalam masa pemulihan 30 hari.
@@ -21,7 +23,7 @@ export async function getPostLoginPath(
     return '/login?accountDeleted=1'
   }
 
-  const { data: agreement } = await supabase
+  const { data: agreement, error: agreementError } = await supabase
     .from('agreements')
     .select('id')
     .eq('is_active', true)
@@ -29,14 +31,17 @@ export async function getPostLoginPath(
     .limit(1)
     .maybeSingle()
 
+  if (agreementError) throw new Error('POST_LOGIN_AGREEMENT_UNAVAILABLE')
+
   if (agreement) {
-    const { data: acceptance } = await supabase
+    const { data: acceptance, error: acceptanceError } = await supabase
       .from('agreement_acceptances')
       .select('id')
       .eq('user_id', userId)
       .eq('agreement_id', agreement.id)
       .maybeSingle()
 
+    if (acceptanceError) throw new Error('POST_LOGIN_ACCEPTANCE_UNAVAILABLE')
     if (!acceptance) return '/agreement'
   }
 
