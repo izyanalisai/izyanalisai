@@ -43,10 +43,10 @@ test('recognizes limited, explicit public SELECT grants without claiming RLS pro
   assert.match(result.scope, /does not prove RLS safety/);
 });
 
-test('the historical baseline must remain blocked until privileged grants are reviewed', () => {
-  const sql = readFileSync(new URL('../supabase/migrations/20260825031731_remote_schema.sql', import.meta.url), 'utf8');
+test('the applied hosted baseline must exclude broad anonymous grants', () => {
+  const sql = readFileSync(new URL('../supabase/migrations/20261015225043_izy_hosted_legacy_schema_least_privilege_bootstrap.sql', import.meta.url), 'utf8');
   const result = auditBaseline(sql);
-  assert.equal(result.status, 'BLOCKED_PRIVILEGE_REVIEW');
-  assert.ok(result.anonymousFullPrivilegeObjects >= 50);
+  assert.equal(result.status, 'NO_BROAD_ANON_GRANTS_DETECTED');
+  assert.equal(result.anonymousFullPrivilegeObjects, 0);
   assert.ok(result.securityDefinerOccurrencesToReview >= 90);
 });
