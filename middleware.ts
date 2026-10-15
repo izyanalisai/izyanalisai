@@ -61,9 +61,14 @@ export async function middleware(request: NextRequest) {
 
   // Supabase may rotate or clear cookies during getUser(). Preserve them on redirects.
   const redirectWithCookies = (pathname: string) => {
-    const url = request.nextUrl.clone()
-    url.pathname = pathname
-    url.search = ''
+    // pathname may contain a fixed, intentional query (e.g. accountDeleted).
+    // Assigning that whole value to url.pathname percent-encodes '?' and
+    // drops the query; construct a same-origin destination instead.
+    if (!pathname.startsWith('/') || pathname.startsWith('//')) {
+      throw new Error('UNSAFE_REDIRECT_TARGET')
+    }
+    const url = new URL(pathname, request.nextUrl.origin)
+    url.hash = ''
     const redirect = NextResponse.redirect(url)
     response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie))
     return redirect
