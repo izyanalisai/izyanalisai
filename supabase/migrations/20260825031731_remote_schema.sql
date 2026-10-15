@@ -4157,18 +4157,19 @@ CREATE FUNCTION public.trigger_detect_unusual_activity()
   SET search_path TO '', 'extensions'
   AS $function$
 declare
-  v_url text; v_key text; v_run_id uuid; v_req_id bigint;
+  v_url text; v_key text; v_secret text; v_run_id uuid; v_req_id bigint;
 begin
   v_run_id := public.job_run_start('detect-unusual-activity');
   select decrypted_secret into v_url from vault.decrypted_secrets where name = 'project_url';
   select decrypted_secret into v_key from vault.decrypted_secrets where name = 'service_role_key';
-  if v_url is null or v_key is null then
+  select value into v_secret from public.internal_secrets where key = 'worker_shared_secret';
+  if v_url is null or v_key is null or v_secret is null or length(v_secret) < 32 then
     perform public.job_run_finish(v_run_id, 'ERROR', jsonb_build_object('reason','vault secrets belum diset'));
     return;
   end if;
   select net.http_post(
     url := v_url || '/functions/v1/detect-unusual-activity',
-    headers := jsonb_build_object('Authorization','Bearer ' || v_key,'Content-Type','application/json'),
+    headers := jsonb_build_object('Authorization','Bearer ' || v_key,'Content-Type','application/json','x-worker-secret',v_secret),
     timeout_milliseconds := 60000
   ) into v_req_id;
   perform public.job_run_finish(v_run_id, 'SUCCESS', jsonb_build_object('net_request_id', v_req_id, 'note','dispatched, menunggu reconcile'));
@@ -4385,6 +4386,7 @@ CREATE FUNCTION public.trigger_fetch_index()
 DECLARE
   v_url text;
   v_key text;
+  v_secret text;
   v_run_id uuid;
   v_req_id bigint;
 BEGIN
@@ -4392,15 +4394,16 @@ BEGIN
 
   SELECT decrypted_secret INTO v_url FROM vault.decrypted_secrets WHERE name = 'project_url';
   SELECT decrypted_secret INTO v_key FROM vault.decrypted_secrets WHERE name = 'service_role_key';
+  SELECT value INTO v_secret FROM public.internal_secrets WHERE key = 'worker_shared_secret';
 
-  IF v_url IS NULL OR v_key IS NULL THEN
+  IF v_url IS NULL OR v_key IS NULL OR v_secret IS NULL OR length(v_secret) < 32 THEN
     PERFORM public.job_run_finish(v_run_id, 'ERROR', jsonb_build_object('reason', 'vault secrets belum diset'));
     RETURN;
   END IF;
 
   SELECT net.http_post(
     url := v_url || '/functions/v1/fetch-index',
-    headers := jsonb_build_object('Authorization', 'Bearer ' || v_key, 'Content-Type', 'application/json'),
+    headers := jsonb_build_object('Authorization', 'Bearer ' || v_key, 'Content-Type', 'application/json', 'x-worker-secret', v_secret),
     body := '{}'::jsonb,
     timeout_milliseconds := 30000
   ) INTO v_req_id;
@@ -4481,18 +4484,19 @@ CREATE FUNCTION public.trigger_fetch_news (
   SET search_path TO '', 'extensions'
   AS $function$
 declare
-  v_url text; v_key text; v_run_id uuid; v_req_id bigint;
+  v_url text; v_key text; v_secret text; v_run_id uuid; v_req_id bigint;
 begin
   v_run_id := public.job_run_start('fetch-news-' || p_scope);
   select decrypted_secret into v_url from vault.decrypted_secrets where name = 'project_url';
   select decrypted_secret into v_key from vault.decrypted_secrets where name = 'service_role_key';
-  if v_url is null or v_key is null then
+  select value into v_secret from public.internal_secrets where key = 'worker_shared_secret';
+  if v_url is null or v_key is null or v_secret is null or length(v_secret) < 32 then
     perform public.job_run_finish(v_run_id, 'ERROR', jsonb_build_object('reason','vault secrets belum diset'));
     return;
   end if;
   select net.http_post(
     url := v_url || '/functions/v1/fetch-news?scope=' || p_scope,
-    headers := jsonb_build_object('Authorization','Bearer ' || v_key,'Content-Type','application/json'),
+    headers := jsonb_build_object('Authorization','Bearer ' || v_key,'Content-Type','application/json','x-worker-secret',v_secret),
     timeout_milliseconds := 120000
   ) into v_req_id;
   perform public.job_run_finish(v_run_id, 'SUCCESS', jsonb_build_object('net_request_id', v_req_id, 'note','dispatched, menunggu reconcile'));
