@@ -5,6 +5,7 @@ const PUBLIC_PATHS = [
   '/',
   '/landing',
   '/onboarding',
+  '/splash',
   '/login',
   '/daftar',
   '/auth',
