@@ -1,4 +1,5 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { hasValidSecretHeader } from '../_shared/worker-auth.ts';
 // Webhook publik yang dipanggil Telegram tiap ada update ke bot IzyAnalisAi (spec v5.0 section 19).
 // Alur linking akun:
 //   1. User buka app -> Profil -> "Hubungkan Telegram" -> app panggil RPC generate_telegram_link_code()
@@ -6,9 +7,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 //   2. User buka bot Telegram, kirim: /start <kode>  (atau /link <kode> kalau sudah pernah /start sebelumnya)
 //   3. Telegram POST update ke endpoint ini -> kita cocokkan kode ke telegram_link_codes -> kalau valid,
 //      upsert ke telegram_subscriptions(user_id, chat_id) dan tandai kode used_at.
-// verify_jwt = false karena yang manggil Telegram server, bukan user login -> keamanan pakai secret
-// path (webhook URL harus di-set ke Telegram lewat setWebhook dengan secret_token, ATAU minimal jangan
-// disebar publik). Untuk MVP kita juga cross-check header X-Telegram-Bot-Api-Secret-Token kalau ada.
+// Telegram cannot send a Supabase user JWT. Require its configured secret_token
+// on every request, even when the URL is publicly reachable.
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -47,29 +47,22 @@ Deno.serve(async (req)=>{
   }
   const supabase = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
   try {
-    const { data: tokenRow } = await supabase.from('internal_secrets').select('value').eq('key', 'telegram_bot_token').maybeSingle();
-    const botToken = tokenRow?.value;
-    if (!botToken) {
-      console.warn('[telegram-webhook] telegram_bot_token belum diset, drop update.');
-      return new Response(JSON.stringify({
-        ok: true
-      }), {
-        status: 200,
-        headers: CORS_HEADERS
-      });
+    const { data: whSecretRow, error: whSecretError } = await supabase.from('internal_secrets')
+      .select('value').eq('key', 'telegram_webhook_secret').maybeSingle();
+    if (whSecretError || !whSecretRow?.value || whSecretRow.value.length < 32) {
+      // A missing Telegram secret must never silently turn linking into public API.
+      return new Response('WEBHOOK_NOT_CONFIGURED', { status: 503 });
     }
-    // Optional secret_token check (kalau nanti di-set via Telegram setWebhook secret_token param)
-    const { data: whSecretRow } = await supabase.from('internal_secrets').select('value').eq('key', 'telegram_webhook_secret').maybeSingle();
-    if (whSecretRow?.value) {
-      const headerSecret = req.headers.get('x-telegram-bot-api-secret-token');
-      if (headerSecret !== whSecretRow.value) {
-        return new Response(JSON.stringify({
-          error: 'unauthorized'
-        }), {
-          status: 401,
-          headers: CORS_HEADERS
-        });
-      }
+    if (!(await hasValidSecretHeader(
+      req, whSecretRow.value, 'x-telegram-bot-api-secret-token',
+    ))) {
+      return new Response('UNAUTHORIZED', { status: 401 });
+    }
+    const { data: tokenRow, error: botTokenError } = await supabase.from('internal_secrets')
+      .select('value').eq('key', 'telegram_bot_token').maybeSingle();
+    const botToken = tokenRow?.value;
+    if (botTokenError || !botToken) {
+      return new Response('WEBHOOK_NOT_CONFIGURED', { status: 503 });
     }
     const update = await req.json();
     const message = update?.message;
