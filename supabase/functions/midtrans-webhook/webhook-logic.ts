@@ -93,7 +93,12 @@ export async function processMidtransEvent(body: WebhookBody, deps: WebhookDeps)
   }
   // Ignore out-of-order pending/expired events after successful settlement.
   if (payment.status === 'success') {
-    await deps.markEventProcessed(transactionId);
+    try {
+      await deps.markEventProcessed(transactionId);
+    } catch {
+      await deps.deleteEvent(transactionId);
+      return { status: 500, body: 'DB_ERROR', activationCalled: false };
+    }
     return { status: 200, body: 'OK (already settled)', activationCalled: false };
   }
 
@@ -124,10 +129,16 @@ export async function processMidtransEvent(body: WebhookBody, deps: WebhookDeps)
     }
   }
 
-  if (newStatus) {
-    await deps.updatePaymentStatus(payment.id, newStatus);
+  try {
+    if (newStatus) {
+      await deps.updatePaymentStatus(payment.id, newStatus);
+    }
+    await deps.markEventProcessed(transactionId);
+  } catch {
+    // The event must remain retryable if either the status write or event
+    // acknowledgement failed; never answer HTTP 200 on a database outage.
+    await deps.deleteEvent(transactionId);
+    return { status: 500, body: 'DB_ERROR', activationCalled };
   }
-
-  await deps.markEventProcessed(transactionId);
   return { status: 200, body: 'OK', activationCalled };
 }
