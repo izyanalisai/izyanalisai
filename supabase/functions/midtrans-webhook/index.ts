@@ -64,7 +64,7 @@ Deno.serve(async (req)=>{
       return { error: error ? { code: error.code } : null };
     },
     async findPaymentByOrderId(oid) {
-      const { data } = await admin.from('payments').select('id, status').eq('external_payment_id', oid).maybeSingle();
+      const { data } = await admin.from('payments').select('id, status, amount').eq('external_payment_id', oid).maybeSingle();
       return data ?? null;
     },
     async updatePaymentStatus(paymentId, status) {
