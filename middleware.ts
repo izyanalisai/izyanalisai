@@ -87,7 +87,9 @@ export async function middleware(request: NextRequest) {
     .eq('id', user.id)
     .maybeSingle()
 
-  if (profileError) {
+  // A valid Supabase session is not sufficient without an active profile record.
+  // A missing profile is an authorization failure, not an implicit allow.
+  if (profileError || !profile) {
     return redirectWithCookies('/login?error=profile_unavailable')
   }
   if (profile?.deleted_at) {
