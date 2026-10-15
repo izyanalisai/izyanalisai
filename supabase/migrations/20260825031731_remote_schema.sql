@@ -6,15 +6,15 @@ SET check_function_bodies = false;
 
 CREATE EXTENSION pg_cron WITH SCHEMA pg_catalog;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO anon;
+-- Restricted new-object privileges: public clients receive only explicit object grants.
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT, USAGE ON SEQUENCES TO anon;
+-- Restricted new-object privileges: public clients receive only explicit object grants.
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO authenticated;
+-- Restricted new-object privileges: public clients receive only explicit object grants.
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT, USAGE ON SEQUENCES TO authenticated;
+-- Restricted new-object privileges: public clients receive only explicit object grants.
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON ROUTINES TO authenticated;
+-- Restricted new-object privileges: public clients receive only explicit object grants.
 
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT DELETE, INSERT, SELECT, UPDATE ON TABLES TO service_role;
 
@@ -1728,7 +1728,7 @@ BEGIN
 END;
 $function$;
 
-GRANT ALL ON FUNCTION public.get_active_signal_map() TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON FUNCTION public.get_active_signal_map() TO authenticated;
 
@@ -1842,7 +1842,7 @@ BEGIN
 END;
 $function$;
 
-GRANT ALL ON FUNCTION public.get_full_signal_map(text) TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON FUNCTION public.get_full_signal_map(text) TO authenticated;
 
@@ -1929,7 +1929,7 @@ begin
 end;
 $function$;
 
-GRANT ALL ON FUNCTION public.get_next_trading_day(date, integer) TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON FUNCTION public.get_next_trading_day(date, integer) TO authenticated;
 
@@ -2021,7 +2021,7 @@ BEGIN
 END;
 $function$;
 
-GRANT ALL ON FUNCTION public.get_signal_for_stock(uuid, text) TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON FUNCTION public.get_signal_for_stock(uuid, text) TO authenticated;
 
@@ -2117,7 +2117,7 @@ begin
 end;
 $function$;
 
-GRANT ALL ON FUNCTION public.get_signal_history(text, text, integer, integer, integer) TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON FUNCTION public.get_signal_history(text, text, integer, integer, integer) TO authenticated;
 
@@ -2167,7 +2167,7 @@ BEGIN
 END;
 $function$;
 
-GRANT ALL ON FUNCTION public.get_stock_status_map() TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON FUNCTION public.get_stock_status_map() TO authenticated;
 
@@ -2232,7 +2232,7 @@ BEGIN
 END;
 $function$;
 
-GRANT ALL ON FUNCTION public.get_watch_state_for_stock(uuid, text) TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON FUNCTION public.get_watch_state_for_stock(uuid, text) TO authenticated;
 
@@ -2317,7 +2317,7 @@ $function$;
 
 REVOKE ALL ON FUNCTION public.is_level_mode_gate_passed(text) FROM PUBLIC;
 
-GRANT ALL ON FUNCTION public.is_level_mode_gate_passed(text) TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON FUNCTION public.is_level_mode_gate_passed(text) TO authenticated;
 
@@ -2338,7 +2338,7 @@ CREATE FUNCTION public.is_trading_day (
   );
 $function$;
 
-GRANT ALL ON FUNCTION public.is_trading_day(date) TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON FUNCTION public.is_trading_day(date) TO authenticated;
 
@@ -2485,7 +2485,7 @@ BEGIN
 END;
 $function$;
 
-GRANT ALL ON FUNCTION public.list_active_signals(text) TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON FUNCTION public.list_active_signals(text) TO authenticated;
 
@@ -5096,7 +5096,7 @@ BEGIN
 END;
 $function$;
 
-GRANT ALL ON FUNCTION public.wait_for_net_response(bigint, integer) TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON FUNCTION public.wait_for_net_response(bigint, integer) TO authenticated;
 
@@ -5146,7 +5146,7 @@ ALTER TABLE public.agreement_acceptances
 ALTER TABLE public.agreement_acceptances
   ADD CONSTRAINT agreement_acceptances_user_id_agreement_id_key UNIQUE (user_id, agreement_id);
 
-GRANT ALL ON public.agreement_acceptances TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.agreement_acceptances TO authenticated;
 
@@ -5182,7 +5182,7 @@ ALTER TABLE public.agreement_acceptances
 ALTER TABLE public.agreements
   ADD CONSTRAINT agreements_version_key UNIQUE (VERSION);
 
-GRANT ALL ON public.agreements TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.agreements TO authenticated;
 
@@ -5210,7 +5210,7 @@ ALTER TABLE public.ai_messages
 ALTER TABLE public.ai_messages
   ADD CONSTRAINT ai_messages_role_check CHECK (role = ANY (ARRAY['user'::text, 'assistant'::text]));
 
-GRANT ALL ON public.ai_messages TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.ai_messages TO authenticated;
 
@@ -5263,7 +5263,7 @@ ALTER TABLE public.ai_tasks
 ALTER TABLE public.ai_tasks
   ADD CONSTRAINT ai_tasks_task_type_check CHECK (task_type = ANY (ARRAY['PRICE_ALERT'::text, 'LEVEL_RETEST'::text, 'DAILY_SUMMARY'::text, 'UNUSUAL_VOLUME'::text]));
 
-GRANT ALL ON public.ai_tasks TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.ai_tasks TO authenticated;
 
@@ -5307,7 +5307,7 @@ ALTER TABLE public.ai_threads
 ALTER TABLE public.ai_messages
   ADD CONSTRAINT ai_messages_thread_id_fkey FOREIGN KEY (thread_id) REFERENCES public.ai_threads(id) ON DELETE CASCADE;
 
-GRANT ALL ON public.ai_threads TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.ai_threads TO authenticated;
 
@@ -5341,7 +5341,7 @@ ALTER TABLE public.ai_usage
 ALTER TABLE public.ai_usage
   ADD CONSTRAINT ai_usage_thread_id_fkey FOREIGN KEY (thread_id) REFERENCES public.ai_threads(id);
 
-GRANT ALL ON public.ai_usage TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.ai_usage TO authenticated;
 
@@ -5414,7 +5414,7 @@ ALTER TABLE public.audit_logs
 ALTER TABLE public.ai_tasks
   ADD CONSTRAINT ai_tasks_audit_id_fkey FOREIGN KEY (audit_id) REFERENCES public.audit_logs(id);
 
-GRANT ALL ON public.audit_logs TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.audit_logs TO authenticated;
 
@@ -5535,7 +5535,7 @@ ALTER TABLE public.backtest_runs
 ALTER TABLE public.backtest_runs
   ADD CONSTRAINT backtest_runs_timeframe_check CHECK (timeframe = ANY (ARRAY['D1'::text, 'W1'::text]));
 
-GRANT ALL ON public.backtest_runs TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.backtest_runs TO authenticated;
 
@@ -5560,7 +5560,7 @@ ALTER TABLE public.bug_reports
 ALTER TABLE public.bug_reports
   ADD CONSTRAINT bug_reports_status_check CHECK (status = ANY (ARRAY['OPEN'::text, 'IN_PROGRESS'::text, 'RESOLVED'::text, 'WONT_FIX'::text]));
 
-GRANT ALL ON public.bug_reports TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.bug_reports TO authenticated;
 
@@ -5609,7 +5609,7 @@ ALTER TABLE public.candles
 ALTER TABLE public.candles
   ADD CONSTRAINT candles_timeframe_check CHECK (timeframe = ANY (ARRAY['D1'::text, 'W1'::text]));
 
-GRANT ALL ON public.candles TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.candles TO authenticated;
 
@@ -5647,7 +5647,7 @@ ALTER TABLE public.chart_analyses
 ALTER TABLE public.chart_analyses
   ADD CONSTRAINT chart_analyses_pkey PRIMARY KEY (id);
 
-GRANT ALL ON public.chart_analyses TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.chart_analyses TO authenticated;
 
@@ -5691,7 +5691,7 @@ ALTER TABLE public.corporate_action_detections
 ALTER TABLE public.corporate_action_detections
   ADD CONSTRAINT corporate_action_detections_status_check CHECK (status = ANY (ARRAY['NEW'::text, 'PROMOTED'::text, 'DISMISSED'::text]));
 
-GRANT ALL ON public.corporate_action_detections TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.corporate_action_detections TO authenticated;
 
@@ -5736,7 +5736,7 @@ ALTER TABLE public.corporate_action_detections
 ALTER TABLE public.corporate_actions
   ADD CONSTRAINT corporate_actions_status_check CHECK (status = ANY (ARRAY['PENDING'::text, 'PROCESSED'::text]));
 
-GRANT ALL ON public.corporate_actions TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.corporate_actions TO authenticated;
 
@@ -5775,7 +5775,7 @@ ALTER TABLE public.earnings_calendar
 ALTER TABLE public.earnings_calendar
   ADD CONSTRAINT earnings_calendar_stock_quarter_year_key UNIQUE (stock_id, quarter, year);
 
-GRANT ALL ON public.earnings_calendar TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.earnings_calendar TO authenticated;
 
@@ -5824,7 +5824,7 @@ ALTER TABLE public.economic_events
 ALTER TABLE public.economic_events
   ADD CONSTRAINT economic_events_unique_event UNIQUE (event_name, country, event_date);
 
-GRANT ALL ON public.economic_events TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.economic_events TO authenticated;
 
@@ -5865,7 +5865,7 @@ ALTER TABLE public.fear_greed_index
 ALTER TABLE public.fear_greed_index
   ADD CONSTRAINT fear_greed_index_trade_date_key UNIQUE (trade_date);
 
-GRANT MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE ON public.fear_greed_index TO anon;
+-- No anonymous mutation/control privileges.
 
 GRANT MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE ON public.fear_greed_index TO authenticated;
 
@@ -5894,7 +5894,7 @@ ALTER TABLE public.feature_requests
 ALTER TABLE public.feature_requests
   ADD CONSTRAINT feature_requests_status_check CHECK (status = ANY (ARRAY['OPEN'::text, 'PLANNED'::text, 'SHIPPED'::text, 'DECLINED'::text]));
 
-GRANT ALL ON public.feature_requests TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.feature_requests TO authenticated;
 
@@ -5929,7 +5929,7 @@ ALTER TABLE public.foreign_flow
 ALTER TABLE public.foreign_flow
   ADD CONSTRAINT foreign_flow_pkey PRIMARY KEY (date);
 
-GRANT ALL ON public.foreign_flow TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.foreign_flow TO authenticated;
 
@@ -5958,7 +5958,7 @@ ALTER TABLE public.fundamentals
 ALTER TABLE public.fundamentals
   ADD CONSTRAINT fundamentals_stock_id_key UNIQUE (stock_id);
 
-GRANT ALL ON public.fundamentals TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.fundamentals TO authenticated;
 
@@ -6008,7 +6008,7 @@ ALTER TABLE public.golden_test_cases
 ALTER TABLE public.golden_test_cases
   ADD CONSTRAINT golden_test_cases_status_check CHECK (status = ANY (ARRAY['NOT_POPULATED'::text, 'READY'::text, 'PASSING'::text, 'FAILING'::text]));
 
-GRANT ALL ON public.golden_test_cases TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.golden_test_cases TO authenticated;
 
@@ -6057,7 +6057,7 @@ ALTER TABLE public.idx_eod_uploads
 ALTER TABLE public.idx_eod_uploads
   ADD CONSTRAINT idx_eod_uploads_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES auth.users(id);
 
-GRANT ALL ON public.idx_eod_uploads TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.idx_eod_uploads TO authenticated;
 
@@ -6084,7 +6084,7 @@ ALTER TABLE public.index_history
 ALTER TABLE public.index_history
   ADD CONSTRAINT index_history_ticker_trade_date_key UNIQUE (ticker, trade_date);
 
-GRANT MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE ON public.index_history TO anon;
+-- No anonymous mutation/control privileges.
 
 GRANT MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE ON public.index_history TO authenticated;
 
@@ -6127,7 +6127,7 @@ ALTER TABLE public.indicators
 ALTER TABLE public.indicators
   ADD CONSTRAINT indicators_timeframe_check CHECK (timeframe = ANY (ARRAY['D1'::text, 'W1'::text]));
 
-GRANT ALL ON public.indicators TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.indicators TO authenticated;
 
@@ -6183,7 +6183,7 @@ ALTER TABLE public.intraday_evaluations
 ALTER TABLE public.intraday_evaluations
   ADD CONSTRAINT intraday_evaluations_pkey PRIMARY KEY (id);
 
-GRANT ALL ON public.intraday_evaluations TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.intraday_evaluations TO authenticated;
 
@@ -6222,7 +6222,7 @@ ALTER TABLE public.ipo_calendar
 ALTER TABLE public.ipo_calendar
   ADD CONSTRAINT ipo_calendar_ticker_key UNIQUE (ticker);
 
-GRANT ALL ON public.ipo_calendar TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.ipo_calendar TO authenticated;
 
@@ -6265,7 +6265,7 @@ ALTER TABLE public.job_runs
 ALTER TABLE public.job_runs
   ADD CONSTRAINT job_runs_status_check CHECK (status = ANY (ARRAY['RUNNING'::text, 'SUCCESS'::text, 'ERROR'::text, 'FAILED'::text]));
 
-GRANT ALL ON public.job_runs TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.job_runs TO authenticated;
 
@@ -6290,7 +6290,7 @@ ALTER TABLE public.market_calendar
 ALTER TABLE public.market_calendar
   ADD CONSTRAINT market_calendar_pkey PRIMARY KEY (date);
 
-GRANT ALL ON public.market_calendar TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.market_calendar TO authenticated;
 
@@ -6320,7 +6320,7 @@ ALTER TABLE public.market_index
 ALTER TABLE public.market_index
   ADD CONSTRAINT market_index_quality_check CHECK (quality = ANY (ARRAY['FRESH'::text, 'STALE'::text, 'MISSING'::text, 'INVALID'::text]));
 
-GRANT ALL ON public.market_index TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.market_index TO authenticated;
 
@@ -6352,7 +6352,7 @@ ALTER TABLE public.mtf_pipeline_runs
 ALTER TABLE public.mtf_pipeline_runs
   ADD CONSTRAINT mtf_pipeline_runs_pkey PRIMARY KEY (id);
 
-GRANT ALL ON public.mtf_pipeline_runs TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.mtf_pipeline_runs TO authenticated;
 
@@ -6395,7 +6395,7 @@ ALTER TABLE public.news
 ALTER TABLE public.news
   ADD CONSTRAINT news_sentiment_check CHECK (sentiment = ANY (ARRAY['positive'::text, 'neutral'::text, 'negative'::text]));
 
-GRANT ALL ON public.news TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.news TO authenticated;
 
@@ -6446,7 +6446,7 @@ ALTER TABLE public.corporate_action_detections
 ALTER TABLE public.news_events
   ADD CONSTRAINT news_events_primary_article_id_fkey FOREIGN KEY (primary_article_id) REFERENCES public.news(id);
 
-GRANT ALL ON public.news_events TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.news_events TO authenticated;
 
@@ -6496,7 +6496,7 @@ ALTER TABLE public.news_issuer_mapping
 ALTER TABLE public.news_issuer_mapping
   ADD CONSTRAINT news_issuer_mapping_pkey PRIMARY KEY (id);
 
-GRANT ALL ON public.news_issuer_mapping TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.news_issuer_mapping TO authenticated;
 
@@ -6541,7 +6541,7 @@ ALTER TABLE public.notification_preferences
 ALTER TABLE public.notification_preferences
   ADD CONSTRAINT notification_preferences_pkey PRIMARY KEY (user_id);
 
-GRANT ALL ON public.notification_preferences TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.notification_preferences TO authenticated;
 
@@ -6575,7 +6575,7 @@ ALTER TABLE public.notifications
 ALTER TABLE public.notifications
   ADD CONSTRAINT notifications_pkey PRIMARY KEY (id);
 
-GRANT ALL ON public.notifications TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.notifications TO authenticated;
 
@@ -6609,7 +6609,7 @@ ALTER TABLE public.payment_events
 ALTER TABLE public.payment_events
   ADD CONSTRAINT payment_events_pkey PRIMARY KEY (id);
 
-GRANT ALL ON public.payment_events TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.payment_events TO authenticated;
 
@@ -6650,7 +6650,7 @@ ALTER TABLE public.payment_events
 ALTER TABLE public.payments
   ADD CONSTRAINT payments_status_check CHECK (status = ANY (ARRAY['pending'::text, 'success'::text, 'expired'::text, 'failed'::text]));
 
-GRANT ALL ON public.payments TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.payments TO authenticated;
 
@@ -6833,7 +6833,7 @@ ALTER TABLE public.provider_health
 ALTER TABLE public.provider_health
   ADD CONSTRAINT provider_health_status_check CHECK (status = ANY (ARRAY['UP'::text, 'DEGRADED'::text, 'DOWN'::text]));
 
-GRANT ALL ON public.provider_health TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.provider_health TO authenticated;
 
@@ -6868,7 +6868,7 @@ ALTER TABLE public.push_subscriptions
 ALTER TABLE public.push_subscriptions
   ADD CONSTRAINT push_subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
 
-GRANT ALL ON public.push_subscriptions TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.push_subscriptions TO authenticated;
 
@@ -6915,7 +6915,7 @@ ALTER TABLE public.quotes
 ALTER TABLE public.quotes
   ADD CONSTRAINT quotes_stock_id_key UNIQUE (stock_id);
 
-GRANT ALL ON public.quotes TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.quotes TO authenticated;
 
@@ -6955,7 +6955,7 @@ ALTER TABLE public.rate_limit_hits
 ALTER TABLE public.rate_limit_hits
   ADD CONSTRAINT rate_limit_hits_pkey PRIMARY KEY (bucket_key, window_start);
 
-GRANT ALL ON public.rate_limit_hits TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.rate_limit_hits TO authenticated;
 
@@ -6982,7 +6982,7 @@ ALTER TABLE public.saved_signals
 ALTER TABLE public.saved_signals
   ADD CONSTRAINT saved_signals_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
 
-GRANT ALL ON public.saved_signals TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.saved_signals TO authenticated;
 
@@ -7017,7 +7017,7 @@ ALTER TABLE public.sector_rotation_scores
 ALTER TABLE public.sector_rotation_scores
   ADD CONSTRAINT sector_rotation_scores_sector_id_as_of_date_key UNIQUE (sector_id, as_of_date);
 
-GRANT ALL ON public.sector_rotation_scores TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.sector_rotation_scores TO authenticated;
 
@@ -7045,7 +7045,7 @@ ALTER TABLE public.sectors
 ALTER TABLE public.sector_rotation_scores
   ADD CONSTRAINT sector_rotation_scores_sector_id_fkey FOREIGN KEY (sector_id) REFERENCES public.sectors(id);
 
-GRANT ALL ON public.sectors TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.sectors TO authenticated;
 
@@ -7081,7 +7081,7 @@ ALTER TABLE public.security_acceptance_checks
 ALTER TABLE public.security_acceptance_checks
   ADD CONSTRAINT security_acceptance_checks_threat_key UNIQUE (threat);
 
-GRANT ALL ON public.security_acceptance_checks TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.security_acceptance_checks TO authenticated;
 
@@ -7127,7 +7127,7 @@ ALTER TABLE public.session2_setup_previews
 ALTER TABLE public.session2_setup_previews
   ADD CONSTRAINT session2_setup_previews_stock_id_trade_date_key UNIQUE (stock_id, trade_date);
 
-GRANT ALL ON public.session2_setup_previews TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.session2_setup_previews TO authenticated;
 
@@ -7161,7 +7161,7 @@ ALTER TABLE public.signal_engine_versions
 ALTER TABLE public.signal_engine_versions
   ADD CONSTRAINT signal_engine_versions_timeframe_check CHECK (timeframe = ANY (ARRAY['D1'::text, 'W1'::text]));
 
-GRANT ALL ON public.signal_engine_versions TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.signal_engine_versions TO authenticated;
 
@@ -7197,7 +7197,7 @@ ALTER TABLE public.signal_evidence
 ALTER TABLE public.signal_evidence
   ADD CONSTRAINT signal_evidence_signal_id_key UNIQUE (signal_id);
 
-GRANT ALL ON public.signal_evidence TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.signal_evidence TO authenticated;
 
@@ -7241,7 +7241,7 @@ ALTER TABLE public.signal_pipeline_events
 ALTER TABLE public.signal_pipeline_events
   ADD CONSTRAINT signal_pipeline_events_tier_check CHECK (tier = ANY (ARRAY['daily'::text, 'swing'::text]));
 
-GRANT ALL ON public.signal_pipeline_events TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.signal_pipeline_events TO authenticated;
 
@@ -7287,7 +7287,7 @@ COMMENT ON CONSTRAINT signal_results_result_check ON public.signal_results IS 'S
 ALTER TABLE public.signal_results
   ADD CONSTRAINT signal_results_signal_id_key UNIQUE (signal_id);
 
-GRANT DELETE, INSERT, MAINTAIN, REFERENCES, TRIGGER, TRUNCATE, UPDATE ON public.signal_results TO anon;
+-- No anonymous mutation/control privileges.
 
 GRANT DELETE, INSERT, MAINTAIN, REFERENCES, TRIGGER, TRUNCATE, UPDATE ON public.signal_results TO authenticated;
 
@@ -7329,7 +7329,7 @@ ALTER TABLE public.signal_revisions
 ALTER TABLE public.signal_revisions
   ADD CONSTRAINT signal_revisions_requested_by_fkey FOREIGN KEY (requested_by) REFERENCES public.profiles(id);
 
-GRANT ALL ON public.signal_revisions TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.signal_revisions TO authenticated;
 
@@ -7386,7 +7386,7 @@ ALTER TABLE public.signal_unlocks
 ALTER TABLE public.signal_unlocks
   ADD CONSTRAINT signal_unlocks_user_id_stock_id_unlock_date_key UNIQUE (user_id, stock_id, unlock_date);
 
-GRANT ALL ON public.signal_unlocks TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.signal_unlocks TO authenticated;
 
@@ -7446,7 +7446,7 @@ ALTER TABLE public.signal_watch_states
 ALTER TABLE public.signal_watch_states
   ADD CONSTRAINT signal_watch_states_watch_zone_type_check CHECK (watch_zone_type = ANY (ARRAY['SUPPORT'::text, 'RESISTANCE'::text]));
 
-GRANT ALL ON public.signal_watch_states TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.signal_watch_states TO authenticated;
 
@@ -7747,7 +7747,7 @@ ALTER TABLE public.stocks
 ALTER TABLE public.stocks
   ADD CONSTRAINT stocks_ticker_key UNIQUE (ticker);
 
-GRANT ALL ON public.stocks TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.stocks TO authenticated;
 
@@ -7795,7 +7795,7 @@ ALTER TABLE public.structure_labels
 ALTER TABLE public.structure_labels
   ADD CONSTRAINT structure_labels_timeframe_check CHECK (timeframe = ANY (ARRAY['D1'::text, 'W1'::text]));
 
-GRANT ALL ON public.structure_labels TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.structure_labels TO authenticated;
 
@@ -7874,7 +7874,7 @@ ALTER TABLE public.structure_zones
 ALTER TABLE public.structure_zones
   ADD CONSTRAINT structure_zones_zone_type_check CHECK (zone_type = ANY (ARRAY['SUPPORT'::text, 'RESISTANCE'::text]));
 
-GRANT ALL ON public.structure_zones TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.structure_zones TO authenticated;
 
@@ -7915,7 +7915,7 @@ ALTER TABLE public.subscriptions
 ALTER TABLE public.subscriptions
   ADD CONSTRAINT subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
 
-GRANT ALL ON public.subscriptions TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.subscriptions TO authenticated;
 
@@ -8218,7 +8218,7 @@ ALTER TABLE public.trading_plans
 ALTER TABLE public.trading_plans
   ADD CONSTRAINT trading_plans_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
 
-GRANT ALL ON public.trading_plans TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.trading_plans TO authenticated;
 
@@ -8280,7 +8280,7 @@ ALTER TABLE public.unusual_activities
 ALTER TABLE public.unusual_activities
   ADD CONSTRAINT unusual_activities_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id) ON DELETE CASCADE;
 
-GRANT ALL ON public.unusual_activities TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.unusual_activities TO authenticated;
 
@@ -8313,7 +8313,7 @@ ALTER TABLE public.watchlist_items
 ALTER TABLE public.watchlist_items
   ADD CONSTRAINT watchlist_items_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
 
-GRANT ALL ON public.watchlist_items TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.watchlist_items TO authenticated;
 
@@ -8352,7 +8352,7 @@ ALTER TABLE public.watchlist_items
 ALTER TABLE public.watchlists
   ADD CONSTRAINT watchlists_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
 
-GRANT ALL ON public.watchlists TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.watchlists TO authenticated;
 
@@ -8405,7 +8405,7 @@ CREATE VIEW public.signals_public WITH (security_invoker=true) AS SELECT id,
         END AS downside_support_1
    FROM public.signals s;
 
-GRANT ALL ON public.signals_public TO anon;
+-- No anonymous blanket access; expose only reviewed read-only public resources.
 
 GRANT ALL ON public.signals_public TO authenticated;
 
@@ -8418,3 +8418,14 @@ CREATE EVENT TRIGGER ensure_rls
   ON ddl_command_end
   WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO')
   EXECUTE FUNCTION public.rls_auto_enable();
+
+-- Least-privilege end-state for this fresh hosted project.
+-- Public function EXECUTE is implicit in PostgreSQL unless explicitly revoked.
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, PUBLIC;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM anon, PUBLIC;
+-- Anonymous clients may read only the public market-data catalog; RLS still applies.
+GRANT SELECT ON public.stocks, public.quotes, public.candles, public.indicators,
+  public.news, public.sectors, public.market_index, public.market_calendar,
+  public.earnings_calendar, public.economic_events, public.ipo_calendar
+TO anon;
