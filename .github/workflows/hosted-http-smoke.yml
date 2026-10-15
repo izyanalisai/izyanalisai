@@ -1,0 +1,33 @@
+name: Izy Hosted HTTP Smoke
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  hosted:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check actual Railway frontend over HTTPS
+        run: |
+          python - <<'PY'
+          import json
+          import ssl
+          import urllib.error
+          import urllib.request
+
+          origin = "https://izyanalisai-production.up.railway.app"
+          request = urllib.request.Request(origin + "/",
+                                           headers={"User-Agent": "Izy-Hosted-Readiness/1.0",
+                                                    "Accept": "text/html"})
+          with urllib.request.urlopen(request, timeout=15,
+                                      context=ssl.create_default_context()) as response:
+              payload = response.read(4096)
+              assert response.status == 200, response.status
+              assert response.headers.get("Content-Type", "").lower().startswith("text/html")
+              assert len(payload) >= 128, "Unexpectedly empty frontend HTML"
+          print(json.dumps({"origin": origin, "public_homepage": "PASS",
+                            "scope": "public HTML response only; trading, authentication, payments, market data and Supabase migrations NOT verified"}))
+          PY
