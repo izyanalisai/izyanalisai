@@ -68,3 +68,16 @@ describe('post-login onboarding authorization', () => {
     expect(from).not.toHaveBeenCalledWith('agreements')
   })
 })
+
+
+describe('deleted-account sign-out failures', () => {
+  it('rejects a failed sign-out instead of treating account deletion as cleared', async () => {
+    const { client, signOut } = clientWithResponses({
+      profiles: clean({ deleted_at: '2026-10-01T00:00:00Z', risk_profile: 'moderate' }),
+    })
+    signOut.mockResolvedValueOnce({ error: new Error('sign-out temporarily unavailable') })
+    await expect(getPostLoginPath(client, 'user-1')).rejects.toThrow(
+      'POST_LOGIN_DELETED_ACCOUNT_SIGNOUT_FAILED'
+    )
+  })
+})

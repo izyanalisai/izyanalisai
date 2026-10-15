@@ -111,3 +111,63 @@ describe('onboarding failure handling', () => {
     expect(response.headers.get('location')).toBe('https://example.com/login?error=onboarding_unavailable')
   })
 })
+
+
+describe('deleted-account authorization at the page boundary', () => {
+  const user = { id: 'deleted-user' }
+
+  it('refuses protected pages for deleted accounts even with a valid session', async () => {
+    const signOut = vi.fn()
+    mocks.createServerClient.mockImplementation((_url, _key, options) => ({
+      auth: {
+        getUser: async () => ({ data: { user } }),
+        signOut: async () => {
+          options.cookies.setAll([{ name: 'session', value: '', options: { path: '/', maxAge: 0 } }])
+          signOut()
+          return { error: null }
+        },
+      },
+      from: () => ({
+        select: () => ({
+          eq: () => ({ maybeSingle: async () => ({
+            data: { deleted_at: '2026-10-01T00:00:00Z', is_admin: true }, error: null,
+          }) }),
+        }),
+      }),
+    }))
+    const response = await middleware(new NextRequest('https://example.com/watchlist?token=secret'))
+    expect(response.headers.get('location')).toBe('https://example.com/login?accountDeleted=1')
+    expect(response.cookies.get('session')?.value).toBe('')
+    expect(signOut).toHaveBeenCalledOnce()
+  })
+
+  it('fails closed when the profile query is unavailable', async () => {
+    mocks.createServerClient.mockImplementation(() => ({
+      auth: { getUser: async () => ({ data: { user } }) },
+      from: () => ({
+        select: () => ({ eq: () => ({ maybeSingle: async () => ({
+          data: null, error: new Error('internal database details'),
+        }) }) }),
+      }),
+    }))
+    const response = await middleware(new NextRequest('https://example.com/trading-plan?private=1'))
+    expect(response.headers.get('location')).toBe('https://example.com/login?error=profile_unavailable')
+    expect(response.headers.get('location')).not.toContain('database')
+  })
+
+  it('permits active users without granting non-admin access to /admin', async () => {
+    const select = vi.fn(() => ({
+      eq: () => ({ maybeSingle: async () => ({
+        data: { deleted_at: null, is_admin: false }, error: null,
+      }) }),
+    }))
+    mocks.createServerClient.mockImplementation(() => ({
+      auth: { getUser: async () => ({ data: { user: { id: 'active-user' } } }) },
+      from: () => ({ select }),
+    }))
+    expect((await middleware(new NextRequest('https://example.com/watchlist'))).status).toBe(200)
+    const admin = await middleware(new NextRequest('https://example.com/admin/usage'))
+    expect(admin.headers.get('location')).toBe('https://example.com/')
+    expect(select).toHaveBeenCalledWith('deleted_at, is_admin')
+  })
+})

@@ -19,7 +19,8 @@ export async function getPostLoginPath(
   // Akun yang sudah minta hapus akun tidak boleh dipakai login lagi,
   // meski masih dalam masa pemulihan 30 hari.
   if (profile?.deleted_at) {
-    await supabase.auth.signOut()
+    const { error: signOutError } = await supabase.auth.signOut()
+    if (signOutError) throw new Error('POST_LOGIN_DELETED_ACCOUNT_SIGNOUT_FAILED')
     return '/login?accountDeleted=1'
   }
 

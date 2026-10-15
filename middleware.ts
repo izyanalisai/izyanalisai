@@ -74,17 +74,29 @@ export async function middleware(request: NextRequest) {
     return redirectWithCookies('/landing')
   }
 
-  // Protect /admin route
-  if (path.startsWith('/admin')) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('is_admin')
-      .eq('id', user.id)
-      .maybeSingle()
+  // Every authenticated page enforces account deletion, not just OAuth login.
+  // A stale cookie or a failed sign-out must never grant access to deleted users.
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('deleted_at, is_admin')
+    .eq('id', user.id)
+    .maybeSingle()
 
-    if (!profile?.is_admin) {
-      return redirectWithCookies('/')
+  if (profileError) {
+    return redirectWithCookies('/login?error=profile_unavailable')
+  }
+  if (profile?.deleted_at) {
+    try {
+      await supabase.auth.signOut()
+    } catch {
+      // The profile gate still denies this request if remote sign-out fails.
     }
+    return redirectWithCookies('/login?accountDeleted=1')
+  }
+
+  // Guard the /admin path segment, not unrelated names like /administrator.
+  if ((path === '/admin' || path.startsWith('/admin/')) && !profile?.is_admin) {
+    return redirectWithCookies('/')
   }
 
   return response
