@@ -68,14 +68,16 @@ Deno.serve(async (req)=>{
       return data ?? null;
     },
     async updatePaymentStatus(paymentId, status) {
-      await admin.from('payments').update({ status }).eq('id', paymentId);
+      const { error } = await admin.from('payments').update({ status }).eq('id', paymentId);
+      if (error) throw new Error('PAYMENT_STATUS_WRITE_FAILED');
     },
     async activateSubscription(paymentId) {
       const { error } = await admin.rpc('activate_subscription_from_payment', { p_payment_id: paymentId });
       return { error };
     },
     async markEventProcessed(txId) {
-      await admin.from('payment_events').update({ processed_at: new Date().toISOString() }).eq('external_event_id', txId);
+      const { error } = await admin.from('payment_events').update({ processed_at: new Date().toISOString() }).eq('external_event_id', txId);
+      if (error) throw new Error('PAYMENT_EVENT_ACK_FAILED');
     },
     async deleteEvent(txId) {
       await admin.from('payment_events').delete().eq('external_event_id', txId);
