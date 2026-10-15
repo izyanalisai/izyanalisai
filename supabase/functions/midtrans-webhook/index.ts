@@ -22,6 +22,9 @@ Deno.serve(async (req)=>{
       status: 400
     });
   }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return new Response('INVALID_BODY', { status: 400 });
+  }
   const orderId = String(body.order_id ?? '');
   const signatureKey = String(body.signature_key ?? '');
   const transactionId = String(body.transaction_id ?? '');
