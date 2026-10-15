@@ -125,14 +125,8 @@ export default function Home() {
   const [now, setNow] = useState<Date | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // Dokumen 4.1: setiap buka app pertama kali dalam sesi browser, gerbang
-  // lewat Splash dulu (yang lalu redirect ke Onboarding/Landing/Home sesuai
-  // status). Setelah itu (dalam sesi yang sama) tidak diulang lagi.
-  useEffect(() => {
-    if (typeof window !== 'undefined' && !sessionStorage.getItem('izy_splash_shown')) {
-      router.replace('/splash')
-    }
-  }, [router])
+  // Homepage is publicly accessible without splash, onboarding, or login.
+  // Individual account features retain their normal server-side guards.
 
   useEffect(() => {
     const tick = () => {
