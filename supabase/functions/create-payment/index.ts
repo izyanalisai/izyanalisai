@@ -62,9 +62,12 @@ Deno.serve(async (req)=>{
     p_max_hits: 5,
     p_window_seconds: 60
   });
-  if (rateErr) {
-    console.error('[create-payment] check_rate_limit error:', rateErr.message);
-  } else if (rateOk === false) {
+  if (rateErr || rateOk == null) {
+    console.error('[create-payment] rate limiter unavailable');
+    return new Response(JSON.stringify({ error: 'RATE_LIMIT_UNAVAILABLE' }), {
+      status: 503, headers: { 'Content-Type': 'application/json' },
+    });
+  } else if (rateOk !== true) {
     return new Response(JSON.stringify({
       error: 'RATE_LIMITED',
       detail: 'Terlalu banyak percobaan pembayaran, coba lagi sebentar'
