@@ -27,6 +27,22 @@ export interface InsertEventResult {
 export interface PaymentRow {
   id: string;
   status: string;
+  amount: number | string;
+}
+
+/** Compare exact IDR cents, not floating-point numbers or provider assertions. */
+function toCents(value: unknown): bigint | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const parts = /^([0-9]+)(?:\.([0-9]{1,2}))?$/.exec(String(value));
+  if (!parts) return null;
+  const minor = BigInt(parts[1]) * 100n + BigInt((parts[2] ?? '').padEnd(2, '0'));
+  return minor > 0n ? minor : null;
+}
+
+export function paymentAmountMatches(providerAmount: unknown, orderAmount: number | string): boolean {
+  const actual = toCents(providerAmount);
+  const expected = toCents(orderAmount);
+  return actual !== null && expected !== null && actual === expected;
 }
 
 // Interface I/O yang di-inject -- implementasi asli (index.ts) membungkus Supabase
@@ -67,7 +83,18 @@ export async function processMidtransEvent(body: WebhookBody, deps: WebhookDeps)
 
   const payment = await deps.findPaymentByOrderId(orderId);
   if (!payment) {
+    // Release the unique event claim so an eventual payment row can retry.
+    await deps.deleteEvent(transactionId);
     return { status: 404, body: 'PAYMENT_NOT_FOUND', activationCalled: false };
+  }
+  if (!paymentAmountMatches(body.gross_amount, payment.amount)) {
+    await deps.deleteEvent(transactionId);
+    return { status: 422, body: 'PAYMENT_AMOUNT_MISMATCH', activationCalled: false };
+  }
+  // Ignore out-of-order pending/expired events after successful settlement.
+  if (payment.status === 'success') {
+    await deps.markEventProcessed(transactionId);
+    return { status: 200, body: 'OK (already settled)', activationCalled: false };
   }
 
   // FIX (25 Agustus 2026, ditemukan saat nulis test idempotency): sebelumnya
