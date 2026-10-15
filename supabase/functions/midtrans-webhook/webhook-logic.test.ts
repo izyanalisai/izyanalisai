@@ -10,7 +10,7 @@ import { processMidtransEvent, type WebhookDeps, type WebhookBody } from './webh
 // UNIQUE(external_event_id) di tabel payment_events. Insert kedua dengan
 // transaction_id yang sama akan gagal dengan code '23505', persis seperti
 // Postgres.
-function makeFakeDeps(opts?: { activationFails?: boolean }) {
+function makeFakeDeps(opts?: { activationFails?: boolean; statusUpdateFails?: boolean; eventAckFails?: boolean }) {
   const processedEvents = new Set<string>();
   const payments = new Map<string, { id: string; status: string; amount: number; order_id: string }>();
   payments.set('ORDER-1', { id: 'pay_1', status: 'pending', amount: 59000, order_id: 'ORDER-1' });
@@ -29,6 +29,7 @@ function makeFakeDeps(opts?: { activationFails?: boolean }) {
       return p ? { id: p.id, status: p.status, amount: p.amount } : null;
     },
     async updatePaymentStatus(paymentId, status) {
+      if (opts?.statusUpdateFails) throw new Error('Synthetic database outage');
       for (const p of payments.values()) {
         if (p.id === paymentId) p.status = status;
       }
@@ -41,7 +42,7 @@ function makeFakeDeps(opts?: { activationFails?: boolean }) {
       return { error: null };
     },
     async markEventProcessed() {
-      // no-op untuk test, cukup dicek lewat processedEvents
+      if (opts?.eventAckFails) throw new Error('Synthetic event ACK outage');
     },
     async deleteEvent(transactionId) {
       processedEvents.delete(transactionId);
@@ -206,4 +207,31 @@ Deno.test('processMidtransEvent does not downgrade a settled order', async () =>
   assertEquals(outcome.activationCalled, false);
   assertEquals(getPaymentStatus('ORDER-1'), 'success');
   assertEquals(getActivationCallCount(), 1);
+});
+
+
+Deno.test('Midtrans event remains retryable when payment status persistence fails', async () => {
+  const { deps, getPaymentStatus, getActivationCallCount } = makeFakeDeps({ statusUpdateFails: true });
+  const event = successEvent('TXN-WRITE-FAIL');
+  const result = await processMidtransEvent(event, deps);
+  assertEquals(result.status, 500);
+  assertEquals(result.body, 'DB_ERROR');
+  assertEquals(getPaymentStatus('ORDER-1'), 'pending');
+  assertEquals(getActivationCallCount(), 1);
+  const retry = await processMidtransEvent(event, deps);
+  assertEquals(retry.status, 500);
+  assertEquals(retry.body, 'DB_ERROR');
+  assertEquals(getActivationCallCount(), 2);
+});
+
+Deno.test('Midtrans event does not return 200 when its acknowledgement fails', async () => {
+  const { deps, getPaymentStatus, getActivationCallCount } = makeFakeDeps({ eventAckFails: true });
+  const event = successEvent('TXN-ACK-FAIL');
+  const first = await processMidtransEvent(event, deps);
+  assertEquals(first.status, 500);
+  assertEquals(first.body, 'DB_ERROR');
+  assertEquals(getPaymentStatus('ORDER-1'), 'success');
+  const retry = await processMidtransEvent(event, deps);
+  assertEquals(retry.status, 500);
+  assertEquals(getActivationCallCount(), 1); // no repeat subscription activation
 });
