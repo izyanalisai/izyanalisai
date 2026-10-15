@@ -15,6 +15,28 @@ test('rejects permissive anonymous default grants', () => {
   assert.equal(result.anonymousDefaultPrivilegeStatements, 1);
 });
 
+test('rejects grants across every public table', () => {
+  const result = auditBaseline('GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;');
+  assert.equal(result.status, 'BLOCKED_PRIVILEGE_REVIEW');
+  assert.equal(result.broadSchemaGrants, 1);
+});
+
+test('rejects PUBLIC grants to individual objects', () => {
+  const result = auditBaseline('GRANT EXECUTE ON FUNCTION public.rotate_secret(uuid) TO PUBLIC;');
+  assert.equal(result.status, 'BLOCKED_PRIVILEGE_REVIEW');
+  assert.equal(result.publicObjectGrants, 1);
+});
+
+test('rejects PUBLIC as a recipient of blanket defaults', () => {
+  const result = auditBaseline('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO PUBLIC;');
+  assert.equal(result.status, 'BLOCKED_PRIVILEGE_REVIEW');
+});
+
+test('does not accidentally bridge semicolon boundaries', () => {
+  const result = auditBaseline('GRANT SELECT ON public.stocks TO anon; GRANT ALL ON public.payments TO authenticated;');
+  assert.equal(result.status, 'NO_BROAD_ANON_GRANTS_DETECTED');
+});
+
 test('recognizes limited, explicit public SELECT grants without claiming RLS proof', () => {
   const result = auditBaseline('GRANT SELECT ON public.stocks TO anon; ALTER TABLE public.stocks ENABLE ROW LEVEL SECURITY;');
   assert.equal(result.status, 'NO_BROAD_ANON_GRANTS_DETECTED');
