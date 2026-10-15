@@ -36,7 +36,7 @@ describe('session redirect cookies', () => {
   })
 
   it('keeps public and worker routes accessible without calling session auth', async () => {
-    for (const path of ['/', '/landing', '/splash', '/onboarding', '/login', '/auth/callback', '/api/cron/fetch-quotes']) {
+    for (const path of ['/', '/landing', '/splash', '/onboarding', '/berita', '/kalender', '/saham/BBCA', '/screener', '/login', '/auth/callback', '/api/cron/fetch-quotes']) {
       const response = await middleware(new NextRequest(`https://example.com${path}`))
       expect(response.status).toBe(200)
     }
