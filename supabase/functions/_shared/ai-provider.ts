@@ -78,6 +78,18 @@ export async function callSelectedAI(
       throw new Error('AI response was refused or truncated')
     }
     if (typeof text !== 'string' || !text.trim()) throw new Error('AI provider returned no text')
+    if (options.json) {
+      // JSON mode is a provider request, not a guarantee. Never forward
+      // malformed structured output to downstream analysis workflows.
+      try {
+        const structured = JSON.parse(text)
+        if (!structured || typeof structured !== 'object' || Array.isArray(structured)) {
+          throw new Error('Expected a JSON object')
+        }
+      } catch {
+        throw new Error('AI provider returned invalid structured JSON')
+      }
+    }
     return {
       text, modelUsed: `${provider.name}:${provider.model}`,
       usage: { input: data?.usage?.prompt_tokens ?? 0, output: data?.usage?.completion_tokens ?? 0 },
