@@ -7,7 +7,7 @@ export type ReconciledProviderStatus =
 
 function cents(value: unknown): bigint | null {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
-  const match = /^([0-9]{1,14})(?:\\.([0-9]{1,2}))?$/.exec(String(value));
+  const match = /^([0-9]{1,14})(?:\.([0-9]{1,2}))?$/.exec(String(value));
   if (!match) return null;
   return BigInt(match[1]) * 100n + BigInt((match[2] ?? '').padEnd(2, '0'));
 }
