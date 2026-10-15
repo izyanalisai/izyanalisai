@@ -1,4 +1,5 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { decidePaymentRateLimit } from './rate-limit-guard.ts';
 // FIX (audit 18 Agustus 2026): harga disesuaikan ke Rp59.000 sesuai Section 10.3 &
 // 26.1 poin 22 di spec v4.2 (grandfathered) -- sebelumnya masih placeholder 49.000
 // (komentar lama: "NOTE: Harga placeholder, WAJIB disesuaikan tim sebelum go-live").
@@ -62,17 +63,14 @@ Deno.serve(async (req)=>{
     p_max_hits: 5,
     p_window_seconds: 60
   });
-  if (rateErr || rateOk == null) {
-    console.error('[create-payment] rate limiter unavailable');
-    return new Response(JSON.stringify({ error: 'RATE_LIMIT_UNAVAILABLE' }), {
-      status: 503, headers: { 'Content-Type': 'application/json' },
-    });
-  } else if (rateOk !== true) {
-    return new Response(JSON.stringify({
-      error: 'RATE_LIMITED',
-      detail: 'Terlalu banyak percobaan pembayaran, coba lagi sebentar'
-    }), {
-      status: 429
+  const limitFailure = decidePaymentRateLimit(rateOk, rateErr);
+  if (limitFailure) {
+    if (limitFailure.status === 503) {
+      console.error('[create-payment] rate limiter unavailable');
+    }
+    return new Response(JSON.stringify({ error: limitFailure.error }), {
+      status: limitFailure.status,
+      headers: { 'Content-Type': 'application/json' },
     });
   }
   let body;
