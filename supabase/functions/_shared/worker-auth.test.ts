@@ -1,4 +1,4 @@
-import { hasValidWorkerSecret } from './worker-auth.ts'
+import { hasValidWorkerSecret, hasValidSecretHeader } from './worker-auth.ts'
 
 const secret = 'worker-auth-test-secret-with-adequate-entropy-123'
 
@@ -35,4 +35,17 @@ Deno.test('accepts exactly matching configured worker credentials', async () => 
     method: 'POST', headers: {'x-worker-secret': secret},
   })
   if (!(await hasValidWorkerSecret(request, secret))) throw new Error('valid worker rejected')
+})
+
+Deno.test('Telegram signature header is mandatory and checked independently', async () => {
+  const signedRequest = new Request('https://example.invalid/telegram', {
+    method: 'POST', headers: {'x-telegram-bot-api-secret-token': secret},
+  })
+  if (!(await hasValidSecretHeader(signedRequest, secret, 'x-telegram-bot-api-secret-token')))
+    throw new Error('valid Telegram header rejected')
+  if (await hasValidWorkerSecret(signedRequest, secret))
+    throw new Error('Telegram header improperly accepted as worker credential')
+  const unsigned = new Request('https://example.invalid/telegram', { method: 'POST' })
+  if (await hasValidSecretHeader(unsigned, secret, 'x-telegram-bot-api-secret-token'))
+    throw new Error('unsigned Telegram webhook permitted')
 })
