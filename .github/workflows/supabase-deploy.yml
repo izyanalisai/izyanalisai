@@ -14,6 +14,9 @@ jobs:
         with:
           version: latest
 
+      - name: Block database deployment if historical anonymous privileges remain unreviewed
+        run: node scripts/audit-supabase-baseline.mjs --enforce
+
       - name: Link project
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
         env:
