@@ -22,7 +22,6 @@ jobs:
 
       - name: Push database migrations
         id: db_push
-        continue-on-error: true
         run: supabase db push
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
