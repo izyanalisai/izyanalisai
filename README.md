@@ -30,7 +30,7 @@ npm run lint -- --max-warnings=0
 npm run build
 ```
 
-Auth regression tests verify cookie preservation on redirects, callback cookie parsing, failed exchanges, and the public/worker-route bypass. These tests mock Supabase; they do not replace live OAuth testing or database authorization checks. `Web Checks` runs tests, TypeScript, lint, and a build using placeholder public configuration. Cloudflare deployment runs the web checks before building/deploying.
+Auth regression tests verify cookie preservation on redirects, callback cookie parsing, failed exchanges, and the public/worker-route bypass. These tests mock Supabase; they do not replace live OAuth testing or database authorization checks. `Web Checks` runs tests, TypeScript, lint, and a build using placeholder public configuration. Cloudflare deployment is a manual GitHub Actions workflow while its external Cloudflare and Supabase secrets are not configured. It checks for required configuration before building; an empty secret is an external setup blocker, not a reason to inject placeholder production credentials. `Web Checks` continues automatically on every push to `main`.
 
 Edge-function tests are configured in `.github/workflows/test-edge-functions.yml`. Payment tests and signal lifecycle tests are separate from the frontend suite. Live Supabase, market data, AI providers, billing, notification delivery, and Cloudflare deployments require their actual configuration and additional integration verification.
 

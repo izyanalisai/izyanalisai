@@ -1,19 +1,36 @@
 name: Deploy to Cloudflare Workers
 
+# External deployment is intentionally manual while Cloudflare and Supabase
+# credentials are not configured in this GitHub repository.
 on:
-  push:
-    branches: [main]
   workflow_dispatch: {}
+permissions:
+  contents: read
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      - name: Validate external deployment configuration
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          for key in SUPABASE_URL SUPABASE_ANON_KEY CF_API_TOKEN CF_ACCOUNT_ID; do
+            if [[ -z "${!key}" ]]; then
+              echo "::error::Required deployment configuration is missing: ${key}"
+              exit 1
+            fi
+          done
 
       - name: Install dependencies
         run: npm ci
