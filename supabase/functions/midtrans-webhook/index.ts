@@ -64,7 +64,8 @@ Deno.serve(async (req)=>{
       return { error: error ? { code: error.code } : null };
     },
     async findPaymentByOrderId(oid) {
-      const { data } = await admin.from('payments').select('id, status, amount').eq('external_payment_id', oid).maybeSingle();
+      const { data, error } = await admin.from('payments').select('id, status, amount').eq('external_payment_id', oid).maybeSingle();
+      if (error) throw new Error('PAYMENT_LOOKUP_FAILED');
       return data ?? null;
     },
     async updatePaymentStatus(paymentId, status) {
