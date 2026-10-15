@@ -14,8 +14,12 @@ for (const name of protectedWorkers) {
       !source.includes("if (workerDenied) return workerDenied;")) {
     throw new Error(`PRIVILEGED_WORKER_UNPROTECTED: ${name}`)
   }
-  const gate = source.indexOf('if (workerDenied) return workerDenied;')
-  const nextPrivilegedAction = source.search(/\.from\(['"](?!internal_secrets)/)
+  // Helper functions declared outside the handler are not invoked here.
+  const handlerStart = source.lastIndexOf('Deno.serve(async')
+  if (handlerStart < 0) throw new Error(`PRIVILEGED_HANDLER_MISSING: ${name}`)
+  const handler = source.slice(handlerStart)
+  const gate = handler.indexOf('if (workerDenied) return workerDenied;')
+  const nextPrivilegedAction = handler.search(/\.from\(['"](?!internal_secrets)/)
   if (nextPrivilegedAction >= 0 && nextPrivilegedAction < gate) {
     throw new Error(`PRIVILEGED_ACTION_BEFORE_AUTH: ${name}`)
   }
