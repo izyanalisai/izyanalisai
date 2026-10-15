@@ -1,11 +1,7 @@
 name: Deploy Supabase
 
+# Explicit operator-triggered deployment only; never release untested migrations on push.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'supabase/migrations/**'
-      - 'supabase/functions/**'
   workflow_dispatch: {}
 
 jobs:
