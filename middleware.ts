@@ -83,7 +83,7 @@ export async function middleware(request: NextRequest) {
   // A stale cookie or a failed sign-out must never grant access to deleted users.
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
-    .select('deleted_at, is_admin')
+    .select('deleted_at, is_admin, is_active')
     .eq('id', user.id)
     .maybeSingle()
 
@@ -92,13 +92,17 @@ export async function middleware(request: NextRequest) {
   if (profileError || !profile) {
     return redirectWithCookies('/login?error=profile_unavailable')
   }
-  if (profile?.deleted_at) {
+  // Disabled accounts must not regain access by retaining an otherwise valid
+  // session. Treat an absent/unknown active flag as inactive (fail closed).
+  if (profile.deleted_at || profile.is_active !== true) {
     try {
       await supabase.auth.signOut()
     } catch {
-      // The profile gate still denies this request if remote sign-out fails.
+      // Deny access even when remote sign-out is unavailable.
     }
-    return redirectWithCookies('/login?accountDeleted=1')
+    return redirectWithCookies(profile.deleted_at
+      ? '/login?accountDeleted=1'
+      : '/login?error=account_inactive')
   }
 
   // Guard the /admin path segment, not unrelated names like /administrator.
