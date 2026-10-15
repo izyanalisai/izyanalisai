@@ -24,7 +24,7 @@ for (const name of protectedWorkers) {
     throw new Error(`PRIVILEGED_ACTION_BEFORE_AUTH: ${name}`)
   }
 }
-const sql = read('supabase/migrations/20260825031731_remote_schema.sql')
+const sql = read('supabase/migrations/20261015225043_izy_hosted_legacy_schema_least_privilege_bootstrap.sql')
 const triggers = [
   ['trigger_fetch_index','fetch-index'],
   ['trigger_fetch_news','fetch-news'],
