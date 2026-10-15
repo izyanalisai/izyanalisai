@@ -1,0 +1,19 @@
+-- Fix (25 Agustus 2026): COMMENT ON FUNCTION public.trigger_fetch_ipo_calendar()
+-- sebelumnya (migration 20260825031731) mengklaim fungsi ini "dipindah ke Railway,
+-- target https://sealangelai.up.railway.app/api/cron/fetch-ipo-calendar" -- tapi
+-- BODY fungsi itu sendiri tidak pernah diubah dan tetap memanggil
+-- '/functions/v1/fetch-ipo-calendar' (Supabase edge function sendiri, lewat
+-- vault project_url), bukan Railway. Comment lama menyesatkan (klaim arsitektur
+-- yang tidak sesuai kode aktual, mirip pola bug callAI.ts di audit sebelumnya).
+--
+-- Catatan: produk ini sudah diganti nama dari IzyAnalisAi menjadi SealAngel
+-- (nama worker Cloudflare di wrangler.jsonc juga "sealangel"), jadi domain
+-- sealangelai.up.railway.app di comment lama BUKAN salah sasaran ke project
+-- lain -- itu tetap domain produk yang sama, cuma stack app-nya sudah pindah
+-- dari Railway ke Cloudflare (24-25 Agustus 2026). Masalah sebenarnya murni:
+-- comment itu mengklaim rute Railway padahal kode fungsi ini sendiri tidak
+-- pernah dipindah, tetap menembak edge function Supabase langsung.
+--
+-- Tidak ada perubahan behavior, murni perbaikan dokumentasi supaya audit
+-- berikutnya tidak salah paham lagi.
+COMMENT ON FUNCTION public.trigger_fetch_ipo_calendar() IS 'Memanggil Supabase edge function fetch-ipo-calendar sendiri (via vault project_url + service_role_key, auth tambahan x-worker-secret). Retry ditangani terpisah oleh trigger_fetch_ipo_calendar_retry(). Kegagalan 403 yang tercatat di audit 19-22 Agustus 2026 berasal dari sumber data eksternal yang dipanggil edge function ini, bukan dari routing pg_cron -> edge function (yang selalu benar dan tidak pernah menunjuk Railway).';
