@@ -28,7 +28,7 @@ describe('session redirect cookies', () => {
         options.cookies.setAll([{ name: 'session', value: 'fresh', options: { httpOnly: true, path: '/' } }])
         return { data: { user: { id: 'u1' } } }
       } },
-      from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { is_admin: false } }) }) }) }),
+      from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { is_admin: false, is_active: true } }) }) }) }),
     }))
     const response = await middleware(new NextRequest('https://example.com/admin'))
     expect(response.headers.get('location')).toBe('https://example.com/')
@@ -130,7 +130,7 @@ describe('deleted-account authorization at the page boundary', () => {
       from: () => ({
         select: () => ({
           eq: () => ({ maybeSingle: async () => ({
-            data: { deleted_at: '2026-10-01T00:00:00Z', is_admin: true }, error: null,
+            data: { deleted_at: '2026-10-01T00:00:00Z', is_admin: true, is_active: false }, error: null,
           }) }),
         }),
       }),
@@ -168,10 +168,41 @@ describe('deleted-account authorization at the page boundary', () => {
     expect(response.headers.get('location')).toBe('https://example.com/login?error=profile_unavailable')
   })
 
+  it('denies suspended profiles even when the existing access token remains valid', async () => {
+    const signOut = vi.fn(async () => ({ error: null }))
+    mocks.createServerClient.mockImplementation(() => ({
+      auth: {
+        getUser: async () => ({ data: { user: { id: 'suspended-user' } } }),
+        signOut,
+      },
+      from: () => ({
+        select: () => ({ eq: () => ({ maybeSingle: async () => ({
+          data: { deleted_at: null, is_admin: false, is_active: false }, error: null,
+        }) }) }),
+      }),
+    }))
+    const response = await middleware(new NextRequest('https://example.com/watchlist'))
+    expect(response.headers.get('location')).toBe('https://example.com/login?error=account_inactive')
+    expect(signOut).toHaveBeenCalledOnce()
+  })
+
+  it('denies profiles with unknown active status rather than granting access', async () => {
+    mocks.createServerClient.mockImplementation(() => ({
+      auth: { getUser: async () => ({ data: { user: { id: 'status-unavailable' } } }) },
+      from: () => ({
+        select: () => ({ eq: () => ({ maybeSingle: async () => ({
+          data: { deleted_at: null, is_admin: true }, error: null,
+        }) }) }),
+      }),
+    }))
+    const response = await middleware(new NextRequest('https://example.com/admin'))
+    expect(response.headers.get('location')).toBe('https://example.com/login?error=account_inactive')
+  })
+
   it('permits active users without granting non-admin access to /admin', async () => {
     const select = vi.fn(() => ({
       eq: () => ({ maybeSingle: async () => ({
-        data: { deleted_at: null, is_admin: false }, error: null,
+        data: { deleted_at: null, is_admin: false, is_active: true }, error: null,
       }) }),
     }))
     mocks.createServerClient.mockImplementation(() => ({
@@ -181,6 +212,6 @@ describe('deleted-account authorization at the page boundary', () => {
     expect((await middleware(new NextRequest('https://example.com/watchlist'))).status).toBe(200)
     const admin = await middleware(new NextRequest('https://example.com/admin/usage'))
     expect(admin.headers.get('location')).toBe('https://example.com/')
-    expect(select).toHaveBeenCalledWith('deleted_at, is_admin')
+    expect(select).toHaveBeenCalledWith('deleted_at, is_admin, is_active')
   })
 })
