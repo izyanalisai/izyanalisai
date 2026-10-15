@@ -10,7 +10,7 @@ import { processMidtransEvent, type WebhookDeps, type WebhookBody } from './webh
 // UNIQUE(external_event_id) di tabel payment_events. Insert kedua dengan
 // transaction_id yang sama akan gagal dengan code '23505', persis seperti
 // Postgres.
-function makeFakeDeps(opts?: { activationFails?: boolean; statusUpdateFails?: boolean; eventAckFails?: boolean }) {
+function makeFakeDeps(opts?: { activationFails?: boolean; statusUpdateFails?: boolean; eventAckFails?: boolean; paymentLookupFails?: boolean }) {
   const processedEvents = new Set<string>();
   const payments = new Map<string, { id: string; status: string; amount: number; order_id: string }>();
   payments.set('ORDER-1', { id: 'pay_1', status: 'pending', amount: 59000, order_id: 'ORDER-1' });
@@ -25,6 +25,7 @@ function makeFakeDeps(opts?: { activationFails?: boolean; statusUpdateFails?: bo
       return { error: null };
     },
     async findPaymentByOrderId(orderId) {
+      if (opts?.paymentLookupFails) throw new Error('Database unavailable');
       const p = payments.get(orderId);
       return p ? { id: p.id, status: p.status, amount: p.amount } : null;
     },
@@ -280,4 +281,18 @@ Deno.test('Event uniqueness key is bounded and does not expose a raw transaction
   assertEquals(claimKey.startsWith('midtrans:v2:'), true);
   assertEquals(claimKey.length, 'midtrans:v2:'.length + 64);
   assertEquals(claimKey.includes('PRIVATE'), false);
+});
+
+
+Deno.test('Database lookup outage returns 500 and preserves retryable event state', async () => {
+  const { deps, getActivationCallCount, getPaymentStatus } = makeFakeDeps({ paymentLookupFails: true });
+  const payload = successEvent('TXN-DB-LOOKUP-OUTAGE');
+  const first = await processMidtransEvent(payload, deps);
+  const retried = await processMidtransEvent(payload, deps);
+  assertEquals(first.status, 500);
+  assertEquals(first.body, 'DB_ERROR');
+  assertEquals(retried.status, 500);
+  assertEquals(retried.body, 'DB_ERROR'); // must not short-circuit to duplicate 200
+  assertEquals(getActivationCallCount(), 0);
+  assertEquals(getPaymentStatus('ORDER-1'), 'pending');
 });
