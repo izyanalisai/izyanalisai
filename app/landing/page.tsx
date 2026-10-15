@@ -1,26 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import PlexusBackground from '@/components/PlexusBackground'
 
 export default function LandingPage() {
-  const router = useRouter()
-  const [checked, setChecked] = useState(false)
-
-  useEffect(() => {
-    const seen = localStorage.getItem('izy_onboarding_done')
-    if (!seen) {
-      router.replace('/onboarding')
-    } else {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- sinkronisasi status onboarding dari localStorage
-      setChecked(true)
-    }
-  }, [router])
-
-  if (!checked) return null
-
   return (
     <main className="min-h-screen relative overflow-hidden text-white px-6 py-10 max-w-[480px] mx-auto flex flex-col justify-center">
       <div className="absolute inset-0 -z-10 animate-gradient-flow" />
@@ -53,18 +36,20 @@ export default function LandingPage() {
       </div>
 
       <Link
-        href="/login"
-        className="w-full text-center rounded-xl px-4 py-3 text-sm font-semibold text-white mb-3"
+        href="/"
+        className="block w-full text-center rounded-xl px-4 py-3 text-sm font-semibold text-white mb-3"
         style={{ backgroundImage: 'linear-gradient(135deg, #3B82F6 0%, #8B5CF6 50%, #EC4899 100%)' }}
       >
-        Masuk Sekarang
+        Jelajahi Pasar Tanpa Login
       </Link>
-      <Link
-        href="/daftar"
-        className="w-full text-center rounded-xl px-4 py-3 text-sm font-semibold text-white border border-white/10"
-      >
-        Daftar Gratis
-      </Link>
+      <div className="grid grid-cols-2 gap-3">
+        <Link href="/login" className="block text-center rounded-xl px-4 py-3 text-sm font-semibold text-white border border-white/10">
+          Masuk (Opsional)
+        </Link>
+        <Link href="/daftar" className="block text-center rounded-xl px-4 py-3 text-sm font-semibold text-white border border-white/10">
+          Daftar (Opsional)
+        </Link>
+      </div>
     </main>
   )
 }
