@@ -1,4 +1,5 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { rejectUnauthorizedWorker } from '../_shared/worker-auth.ts';
 // Signal Engine -- Structural Confluence + Zone Contract (spec v4.2, section 5-7 & 52-59).
 // structural_v2. Ini adalah engine yang DIPANGGIL LANGSUNG oleh cron produksi lewat
 // trigger_signal_pipeline_mtf() (job 65/66/67) -- perbaikan di sini WAJIB ada di sini,
@@ -291,6 +292,13 @@ async function fetchTf(supabase, stockId, tf, now) {
 }
 Deno.serve(async (req)=>{
   const supabase = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
+    const workerDenied = await rejectUnauthorizedWorker(req, async () => {
+      const { data, error } = await supabase.from('internal_secrets')
+        .select('value').eq('key', 'worker_shared_secret').maybeSingle();
+      if (error) throw new Error('WORKER_SECRET_LOOKUP_FAILED');
+      return data?.value;
+    });
+    if (workerDenied) return workerDenied;
   const url = new URL(req.url);
   const tierParam = (url.searchParams.get('tier') ?? 'daily').toLowerCase();
   const offset = Number(url.searchParams.get('offset') ?? '0');

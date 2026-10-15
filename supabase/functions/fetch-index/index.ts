@@ -1,9 +1,17 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { rejectUnauthorizedWorker } from '../_shared/worker-auth.ts';
 // Worker Market Data Refresh (IHSG) - ambil kuotasi index ^JKSE dari Yahoo Finance,
 // jadwal sama seperti fetch-quotes (pg_cron).
-Deno.serve(async ()=>{
+Deno.serve(async (req)=>{
   try {
     const supabase = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
+    const workerDenied = await rejectUnauthorizedWorker(req, async () => {
+      const { data, error } = await supabase.from('internal_secrets')
+        .select('value').eq('key', 'worker_shared_secret').maybeSingle();
+      if (error) throw new Error('WORKER_SECRET_LOOKUP_FAILED');
+      return data?.value;
+    });
+    if (workerDenied) return workerDenied;
     const res = await fetch('https://query1.finance.yahoo.com/v8/finance/chart/%5EJKSE?interval=1d&range=1d', {
       headers: {
         'User-Agent': 'Mozilla/5.0'

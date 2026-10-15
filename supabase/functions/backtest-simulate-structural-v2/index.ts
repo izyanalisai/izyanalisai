@@ -1,4 +1,5 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { rejectUnauthorizedWorker } from '../_shared/worker-auth.ts';
 // Walk-forward historical backtest -- replicates generate-signals-mtf (structural_v2)
 // bar-by-bar: pivot 2/2, zone cluster 1.2%, EMA21/50 bias, overextension gate.
 // No look-ahead: EMA/pivots/zones recomputed from a rolling window ending at bar i only.
@@ -269,6 +270,13 @@ function simulateOneStock(d1, w1, tier) {
 }
 Deno.serve(async (req)=>{
   const supabase = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
+    const workerDenied = await rejectUnauthorizedWorker(req, async () => {
+      const { data, error } = await supabase.from('internal_secrets')
+        .select('value').eq('key', 'worker_shared_secret').maybeSingle();
+      if (error) throw new Error('WORKER_SECRET_LOOKUP_FAILED');
+      return data?.value;
+    });
+    if (workerDenied) return workerDenied;
   const url = new URL(req.url);
   const tier = (url.searchParams.get('tier') ?? 'daily').toLowerCase();
   const offset = Number(url.searchParams.get('offset') ?? '0');

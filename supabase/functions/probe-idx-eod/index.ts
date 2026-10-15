@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { rejectUnauthorizedWorker } from '../_shared/worker-auth.ts';
 // FIX (audit 17 Agustus 2026): js_scenario SEBELUMNYA dikirim di body POST request
 // ke ScrapingBee (JSON.stringify({js_scenario})) -- padahal menurut dokumentasi resmi
 // ScrapingBee, js_scenario harus dikirim sebagai QUERY PARAMETER (URL-encoded JSON),
@@ -9,8 +10,15 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 // (XHR/fetch) yang dilakukan halaman React/Nuxt IDX untuk memuat data tabel -- padahal
 // itu tujuan utama probe ini (mencari endpoint API JSON asli di balik halaman SPA).
 // Sekarang js_scenario dikirim lewat query string sesuai dokumentasi resmi.
-Deno.serve(async (_req)=>{
+Deno.serve(async (req)=>{
   const supabase = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
+    const workerDenied = await rejectUnauthorizedWorker(req, async () => {
+      const { data, error } = await supabase.from('internal_secrets')
+        .select('value').eq('key', 'worker_shared_secret').maybeSingle();
+      if (error) throw new Error('WORKER_SECRET_LOOKUP_FAILED');
+      return data?.value;
+    });
+    if (workerDenied) return workerDenied;
   const { data: secretRow } = await supabase.from('internal_secrets').select('value').eq('key', 'scrapingbee_api_key').maybeSingle();
   const apiKey = secretRow?.value;
   if (!apiKey) return new Response(JSON.stringify({

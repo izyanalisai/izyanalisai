@@ -1,4 +1,5 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { rejectUnauthorizedWorker } from '../_shared/worker-auth.ts';
 // Worker 10 - Unusual Activity Detector (poin 5.8, 10.9 gaya, 14.2).
 // Jalan tiap 5 menit saat sesi pasar. Volume > 3x rata-rata 20 hari
 // & harga bergerak > 2% -> catat ke unusual_activities + notif ke
@@ -11,8 +12,15 @@ const VOLUME_MULTIPLIER_THRESHOLD = 3;
 const PRICE_CHANGE_THRESHOLD_PCT = 2;
 const BASELINE_WINDOW = '20D';
 const DATA_SOURCE = 'yahoo_finance';
-Deno.serve(async (_req)=>{
+Deno.serve(async (req)=>{
   const supabase = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
+    const workerDenied = await rejectUnauthorizedWorker(req, async () => {
+      const { data, error } = await supabase.from('internal_secrets')
+        .select('value').eq('key', 'worker_shared_secret').maybeSingle();
+      if (error) throw new Error('WORKER_SECRET_LOOKUP_FAILED');
+      return data?.value;
+    });
+    if (workerDenied) return workerDenied;
   const { data: quotes, error: qErr } = await supabase.from('quotes').select('stock_id, price, previous_close, volume').not('volume', 'is', null).limit(2000);
   if (qErr) return new Response(JSON.stringify({
     error: qErr.message

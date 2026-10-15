@@ -1,4 +1,5 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { rejectUnauthorizedWorker } from '../_shared/worker-auth.ts';
 const YAHOO_CHART_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const CONCURRENCY = 10;
 const BATCH_DELAY_MS = 300;
@@ -63,6 +64,13 @@ async function fetchYahoo(ticker, timeframe, full) {
 }
 Deno.serve(async (req)=>{
   const supabase = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
+    const workerDenied = await rejectUnauthorizedWorker(req, async () => {
+      const { data, error } = await supabase.from('internal_secrets')
+        .select('value').eq('key', 'worker_shared_secret').maybeSingle();
+      if (error) throw new Error('WORKER_SECRET_LOOKUP_FAILED');
+      return data?.value;
+    });
+    if (workerDenied) return workerDenied;
   const url = new URL(req.url);
   const timeframe = (url.searchParams.get('timeframe') ?? 'D1').toUpperCase();
   const offset = Number(url.searchParams.get('offset') ?? '0');
