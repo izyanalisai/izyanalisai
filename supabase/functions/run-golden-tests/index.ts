@@ -1,4 +1,5 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { hasValidWorkerSecret } from '../_shared/worker-auth.ts';
 // run-golden-tests: dry-run engine structural_v2 terhadap snapshot candle beku
 // (tidak pernah menyentuh tabel signals/structure_zones produksi).
 // Logic pivot/zone/trigger/overextension di-port VERBATIM dari generate-signals-mtf
@@ -364,9 +365,27 @@ function diffResult(expected, actual) {
   return mismatches;
 }
 Deno.serve(async (req)=>{
-  const supabase = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
+  if (req.method !== 'POST') return new Response('METHOD_NOT_ALLOWED', {status:405});
+  if (!req.headers.get('x-worker-secret')) return new Response('UNAUTHORIZED', {status:401});
+  const url = Deno.env.get('SUPABASE_URL');
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!url || !key) return new Response('WORKER_UNAVAILABLE', {status:503});
+  const supabase = createClient(url, key);
+  let expected = Deno.env.get('WORKER_SHARED_SECRET');
+  if (!expected) {
+    const {data, error: lookupError} = await supabase.from('internal_secrets')
+      .select('value').eq('key', 'worker_shared_secret').maybeSingle();
+    if (lookupError) return new Response('WORKER_UNAVAILABLE', {status:503});
+    expected = data?.value;
+  }
+  if (!expected) return new Response('WORKER_UNAVAILABLE', {status:503});
+  if (!(await hasValidWorkerSecret(req, expected))) return new Response('UNAUTHORIZED', {status:401});
   const body = await req.json().catch(()=>({}));
-  const mode = body.mode === 'verify' ? 'verify' : 'seed';
+  // Verification is the safe default. Changing approved golden expectations
+  // requires an explicit 'seed' mode and the private scheduler credential.
+  if (body.mode !== undefined && !['verify', 'seed'].includes(body.mode))
+    return new Response('INVALID_MODE', {status:400});
+  const mode = body.mode === 'seed' ? 'seed' : 'verify';
   const caseCodes = body.case_codes;
   let query = supabase.from('golden_test_cases').select('id, case_code, formula_version, input_snapshot, expected_signal');
   if (caseCodes && caseCodes.length > 0) query = query.in('case_code', caseCodes);
