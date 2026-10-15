@@ -12,7 +12,7 @@ export async function requestSnap(
   basicAuthorization: string,
   orderId: string,
   amountIdr: number,
-  enabledPayments: string[],
+  enabledPayments: readonly string[],
   email: string | undefined,
   send: typeof fetch = fetch,
 ): Promise<SnapOutcome> {
