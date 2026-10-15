@@ -1,6 +1,12 @@
+import { hasValidWorkerSecret } from '../_shared/worker-auth.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-Deno.serve(async (_req) => {
+Deno.serve(async (req) => {
+  if (req.method !== 'POST') return new Response('METHOD_NOT_ALLOWED', {status:405});
+  const expected = Deno.env.get('WORKER_SHARED_SECRET');
+  if (!expected) return new Response('DIAGNOSTIC_DISABLED', {status:503});
+  if (!(await hasValidWorkerSecret(req, expected)))
+    return new Response('UNAUTHORIZED', {status:401});
   let nineRouterKey = Deno.env.get('NINEROUTER_API_KEY') ?? null;
   let nineRouterBaseUrl = Deno.env.get('NINEROUTER_BASE_URL') ?? null;
   let cfAccountId = Deno.env.get('CLOUDFLARE_ACCOUNT_ID') ?? null;
