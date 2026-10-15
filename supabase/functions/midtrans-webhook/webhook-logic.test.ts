@@ -235,3 +235,49 @@ Deno.test('Midtrans event does not return 200 when its acknowledgement fails', a
   assertEquals(retry.status, 500);
   assertEquals(getActivationCallCount(), 1); // no repeat subscription activation
 });
+
+
+Deno.test('Midtrans pending and settlement with same transaction ID are distinct events', async () => {
+  const { deps, getActivationCallCount, getPaymentStatus } = makeFakeDeps();
+  const pending = successEvent('TXN-SHARED-STATUS');
+  pending.transaction_status = 'pending';
+  assertEquals((await processMidtransEvent(pending, deps)).status, 200);
+  assertEquals(getPaymentStatus('ORDER-1'), 'pending');
+
+  // Midtrans does not issue a new transaction ID when payment settles.
+  const settled = successEvent('TXN-SHARED-STATUS');
+  const settledResult = await processMidtransEvent(settled, deps);
+  assertEquals(settledResult.status, 200);
+  assertEquals(settledResult.body, 'OK');
+  assertEquals(getPaymentStatus('ORDER-1'), 'success');
+  assertEquals(getActivationCallCount(), 1);
+
+  const duplicate = await processMidtransEvent(settled, deps);
+  assertEquals(duplicate.body, 'OK (already processed)');
+  assertEquals(getActivationCallCount(), 1);
+});
+
+Deno.test('Late pending status for same transaction cannot downgrade settlement', async () => {
+  const { deps, getPaymentStatus, getActivationCallCount } = makeFakeDeps();
+  const settled = successEvent('TXN-LATE-PENDING-SHARED');
+  const pending = successEvent('TXN-LATE-PENDING-SHARED');
+  pending.transaction_status = 'pending';
+  assertEquals((await processMidtransEvent(settled, deps)).status, 200);
+  assertEquals((await processMidtransEvent(pending, deps)).status, 200);
+  assertEquals(getPaymentStatus('ORDER-1'), 'success');
+  assertEquals(getActivationCallCount(), 1);
+});
+
+Deno.test('Event uniqueness key is bounded and does not expose a raw transaction identifier', async () => {
+  const { deps } = makeFakeDeps();
+  let claimKey = '';
+  const insert = deps.insertEvent;
+  deps.insertEvent = async (key, body) => {
+    claimKey = key;
+    return insert(key, body);
+  };
+  await processMidtransEvent(successEvent('TXN-PRIVATE-ID-123'), deps);
+  assertEquals(claimKey.startsWith('midtrans:v2:'), true);
+  assertEquals(claimKey.length, 'midtrans:v2:'.length + 64);
+  assertEquals(claimKey.includes('PRIVATE'), false);
+});
