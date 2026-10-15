@@ -16,7 +16,7 @@ export default function OnboardingPage() {
 
   const finish = () => {
     localStorage.setItem('izy_onboarding_done', '1')
-    router.replace('/landing')
+    router.replace('/')
   }
 
   const next = () => {
