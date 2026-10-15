@@ -12,8 +12,8 @@ import { processMidtransEvent, type WebhookDeps, type WebhookBody } from './webh
 // Postgres.
 function makeFakeDeps(opts?: { activationFails?: boolean }) {
   const processedEvents = new Set<string>();
-  const payments = new Map<string, { id: string; status: string; order_id: string }>();
-  payments.set('ORDER-1', { id: 'pay_1', status: 'pending', order_id: 'ORDER-1' });
+  const payments = new Map<string, { id: string; status: string; amount: number; order_id: string }>();
+  payments.set('ORDER-1', { id: 'pay_1', status: 'pending', amount: 59000, order_id: 'ORDER-1' });
   let activationCallCount = 0;
 
   const deps: WebhookDeps = {
@@ -26,7 +26,7 @@ function makeFakeDeps(opts?: { activationFails?: boolean }) {
     },
     async findPaymentByOrderId(orderId) {
       const p = payments.get(orderId);
-      return p ? { id: p.id, status: p.status } : null;
+      return p ? { id: p.id, status: p.status, amount: p.amount } : null;
     },
     async updatePaymentStatus(paymentId, status) {
       for (const p of payments.values()) {
@@ -167,4 +167,43 @@ Deno.test('processMidtransEvent - status pending TIDAK memicu aktivasi subscript
   assertEquals(outcome.activationCalled, false);
   assertEquals(getActivationCallCount(), 0);
   assertEquals(getPaymentStatus('ORDER-1'), 'pending');
+});
+
+
+Deno.test('processMidtransEvent rejects a signed but incorrect transaction amount', async () => {
+  const { deps, getActivationCallCount, getPaymentStatus } = makeFakeDeps();
+  const invalid = successEvent('TXN-AMOUNT');
+  invalid.gross_amount = '59001.00';
+  const result = await processMidtransEvent(invalid, deps);
+  assertEquals(result.status, 422);
+  assertEquals(result.body, 'PAYMENT_AMOUNT_MISMATCH');
+  assertEquals(getActivationCallCount(), 0);
+  assertEquals(getPaymentStatus('ORDER-1'), 'pending');
+  // A corrected notification with the same transaction ID is no longer locked.
+  const retry = await processMidtransEvent(successEvent('TXN-AMOUNT'), deps);
+  assertEquals(retry.status, 200);
+  assertEquals(getActivationCallCount(), 1);
+});
+
+Deno.test('processMidtransEvent rejects malformed, negative and fractional rupiah amounts', async () => {
+  const { deps, getActivationCallCount } = makeFakeDeps();
+  for (const amount of ['NaN', '-59000', '59000.001', '5.9e4', '0', '']) {
+    const body = successEvent('TXN-BAD-AMOUNT-' + amount);
+    body.gross_amount = amount;
+    const result = await processMidtransEvent(body, deps);
+    assertEquals(result.status, 422);
+  }
+  assertEquals(getActivationCallCount(), 0);
+});
+
+Deno.test('processMidtransEvent does not downgrade a settled order', async () => {
+  const { deps, getActivationCallCount, getPaymentStatus } = makeFakeDeps();
+  assertEquals((await processMidtransEvent(successEvent('TXN-SETTLED'), deps)).status, 200);
+  const delayed = successEvent('TXN-LATE-EXPIRE');
+  delayed.transaction_status = 'expire';
+  const outcome = await processMidtransEvent(delayed, deps);
+  assertEquals(outcome.status, 200);
+  assertEquals(outcome.activationCalled, false);
+  assertEquals(getPaymentStatus('ORDER-1'), 'success');
+  assertEquals(getActivationCallCount(), 1);
 });
