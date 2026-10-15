@@ -1,9 +1,29 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { hasValidWorkerSecret } from '../_shared/worker-auth.ts';
 function todayWIB(d = new Date()) {
   return new Date(d.getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 }
-Deno.serve(async (_req)=>{
-  const supabase = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
+Deno.serve(async (req)=>{
+  if (req.method !== 'POST') return new Response('METHOD_NOT_ALLOWED', { status: 405 });
+  if (!req.headers.get('x-worker-secret')) return new Response('UNAUTHORIZED', { status: 401 });
+
+  const url = Deno.env.get('SUPABASE_URL');
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!url || !key) return new Response('WORKER_UNAVAILABLE', { status: 503 });
+  const supabase = createClient(url, key);
+  // Use the shared internal scheduler credential, never a public anon token.
+  let expected = Deno.env.get('WORKER_SHARED_SECRET');
+  if (!expected) {
+    const { data, error: secretError } = await supabase.from('internal_secrets')
+      .select('value').eq('key', 'worker_shared_secret').maybeSingle();
+    if (secretError) return new Response('WORKER_UNAVAILABLE', { status: 503 });
+    expected = data?.value;
+  }
+  if (!expected) return new Response('WORKER_UNAVAILABLE', { status: 503 });
+  if (!(await hasValidWorkerSecret(req, expected))) {
+    return new Response('UNAUTHORIZED', { status: 401 });
+  }
+
   const { data: tasks, error } = await supabase.from('ai_tasks').select('id, user_id, task_type, parameters, last_run').eq('is_active', true).eq('status', 'ACTIVE').limit(500);
   if (error) return new Response(JSON.stringify({
     error: error.message
