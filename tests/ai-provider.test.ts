@@ -99,3 +99,34 @@ describe('AI structured response contract', () => {
     expect(output.text).toBe(json)
   })
 })
+
+
+describe('provider usage accounting', () => {
+  it('accepts ordinary token counts', async () => {
+    const fetcher = vi.fn(async () => Response.json({
+      choices: [{ message: { content: 'OK' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 123, completion_tokens: 45 },
+    }))
+    const result = await callSelectedAI([], { getEnv: env(defaults), fetcher })
+    expect(result.usage).toEqual({ input: 123, output: 45 })
+  })
+
+  it('discards invalid token metadata without affecting text output', async () => {
+    const fetcher = vi.fn(async () => Response.json({
+      choices: [{ message: { content: 'OK' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: -3, completion_tokens: '120' },
+    }))
+    const result = await callSelectedAI([], { getEnv: env(defaults), fetcher })
+    expect(result.text).toBe('OK')
+    expect(result.usage).toEqual({ input: 0, output: 0 })
+  })
+
+  it('rejects fractional or unsafe integer token counts', async () => {
+    const fetcher = vi.fn(async () => Response.json({
+      choices: [{ message: { content: 'OK' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1.5, completion_tokens: Number.MAX_SAFE_INTEGER + 1 },
+    }))
+    const result = await callSelectedAI([], { getEnv: env(defaults), fetcher })
+    expect(result.usage).toEqual({ input: 0, output: 0 })
+  })
+})
