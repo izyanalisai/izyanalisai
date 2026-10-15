@@ -67,3 +67,35 @@ it('does not expose malformed provider response bodies', async () => {
   const fetcher = vi.fn(async () => new Response('sensitive-invalid-json', { status: 200 }))
   await expect(callSelectedAI([], { getEnv: env(defaults), fetcher })).rejects.toThrow('AI provider returned invalid JSON')
 })
+
+
+describe('AI structured response contract', () => {
+  it.each([
+    'not JSON', '{"incomplete":', 'null', '[]', '"text only"', '42',
+  ])('rejects unusable structured output: %s', async (body) => {
+    const fetcher = vi.fn(async () => Response.json({
+      choices: [{ message: { content: body }, finish_reason: 'stop' }],
+    }))
+    await expect(callSelectedAI([{ role: 'user', content: 'test' }], {
+      getEnv: env(defaults), fetcher, json: true,
+    })).rejects.toThrow('AI provider returned invalid structured JSON')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('permits the same ordinary text when structured mode is not requested', async () => {
+    const fetcher = vi.fn(async () => Response.json({
+      choices: [{ message: { content: 'A plain-language explanation' }, finish_reason: 'stop' }],
+    }))
+    const output = await callSelectedAI([], { getEnv: env(defaults), fetcher })
+    expect(output.text).toBe('A plain-language explanation')
+  })
+
+  it('accepts a valid JSON object without changing its contents', async () => {
+    const json = '{"decision":"hold","confidence":0.4}'
+    const fetcher = vi.fn(async () => Response.json({
+      choices: [{ message: { content: json }, finish_reason: 'stop' }],
+    }))
+    const output = await callSelectedAI([], { getEnv: env(defaults), fetcher, json: true })
+    expect(output.text).toBe(json)
+  })
+})
