@@ -51,6 +51,13 @@ export function resolveProvider(getEnv: Env = env, vision = false): Provider {
   return { name, baseUrl: url.toString(), apiKey, model, tokenParameter, maxTokens, timeoutMs }
 }
 
+/** Keep provider-reported usage bounded and numeric before recording it. */
+function safeUsageCount(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : 0
+}
+
 export async function callSelectedAI(
   messages: Message[],
   options: { vision?: boolean; json?: boolean; getEnv?: Env; fetcher?: typeof fetch } = {},
@@ -92,7 +99,10 @@ export async function callSelectedAI(
     }
     return {
       text, modelUsed: `${provider.name}:${provider.model}`,
-      usage: { input: data?.usage?.prompt_tokens ?? 0, output: data?.usage?.completion_tokens ?? 0 },
+      usage: {
+        input: safeUsageCount(data?.usage?.prompt_tokens),
+        output: safeUsageCount(data?.usage?.completion_tokens),
+      },
     }
   } catch (error) {
     if (controller.signal.aborted) throw new Error(`AI provider ${provider.name} timed out`)
