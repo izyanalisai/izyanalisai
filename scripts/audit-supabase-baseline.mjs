@@ -38,7 +38,7 @@ export function auditBaseline(sql) {
 
 const here = dirname(fileURLToPath(import.meta.url));
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const file = resolve(here, '../supabase/migrations/20260825031731_remote_schema.sql');
+  const file = resolve(here, '../supabase/migrations/20261015225043_izy_hosted_legacy_schema_least_privilege_bootstrap.sql');
   const result = auditBaseline(readFileSync(file, 'utf8'));
   console.log(JSON.stringify(result, null, 2));
   if (result.status !== 'NO_BROAD_ANON_GRANTS_DETECTED') {
