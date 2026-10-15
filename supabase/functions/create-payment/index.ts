@@ -1,6 +1,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { decidePaymentRateLimit } from './rate-limit-guard.ts';
 import { requestSnap } from './snap-request.ts';
+import { isAllowedPaymentMethod } from './payment-method.ts';
 // FIX (audit 18 Agustus 2026): harga disesuaikan ke Rp59.000 sesuai Section 10.3 &
 // 26.1 poin 22 di spec v4.2 (grandfathered) -- sebelumnya masih placeholder 49.000
 // (komentar lama: "NOTE: Harga placeholder, WAJIB disesuaikan tim sebelum go-live").
@@ -90,7 +91,7 @@ Deno.serve(async (req)=>{
     });
   }
   const method = body.method ?? '';
-  if (!METHOD_TO_MIDTRANS[method]) {
+  if (!isAllowedPaymentMethod(METHOD_TO_MIDTRANS, method)) {
     return new Response(JSON.stringify({
       error: 'INVALID_METHOD',
       allowed: Object.keys(METHOD_TO_MIDTRANS)
