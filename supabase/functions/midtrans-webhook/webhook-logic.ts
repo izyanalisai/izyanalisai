@@ -70,10 +70,18 @@ export async function processMidtransEvent(body: WebhookBody, deps: WebhookDeps)
   const transactionStatus = String(body.transaction_status ?? '');
   const fraudStatus = String(body.fraud_status ?? '');
 
-  // Idempotency: transaction_id Midtrans cuma diproses sekali. Kalau row sudah
-  // ada (unique violation, kode Postgres 23505), event ini adalah retry/duplikat
-  // -- aman untuk return 200 tanpa mengulang efek samping (update status, aktivasi).
-  const { error: eventInsertErr } = await deps.insertEvent(transactionId, body);
+  // Midtrans reuses transaction_id as an order moves from pending to
+  // settlement. Deduplicating only transaction_id permanently suppresses that
+  // legitimate transition. Hash the verified event's stable identity, keeping
+  // retries of the same status idempotent without exposing provider data in
+  // the unique-key column. Invalid amount events still get rejected below.
+  const eventIdentity = JSON.stringify([
+    orderId, transactionId, transactionStatus, fraudStatus, body.gross_amount,
+  ]);
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(eventIdentity));
+  const eventKey = 'midtrans:v2:' + Array.from(new Uint8Array(hash))
+    .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  const { error: eventInsertErr } = await deps.insertEvent(eventKey, body);
   if (eventInsertErr) {
     if (eventInsertErr.code === '23505') {
       return { status: 200, body: 'OK (already processed)', activationCalled: false };
@@ -84,19 +92,19 @@ export async function processMidtransEvent(body: WebhookBody, deps: WebhookDeps)
   const payment = await deps.findPaymentByOrderId(orderId);
   if (!payment) {
     // Release the unique event claim so an eventual payment row can retry.
-    await deps.deleteEvent(transactionId);
+    await deps.deleteEvent(eventKey);
     return { status: 404, body: 'PAYMENT_NOT_FOUND', activationCalled: false };
   }
   if (!paymentAmountMatches(body.gross_amount, payment.amount)) {
-    await deps.deleteEvent(transactionId);
+    await deps.deleteEvent(eventKey);
     return { status: 422, body: 'PAYMENT_AMOUNT_MISMATCH', activationCalled: false };
   }
   // Ignore out-of-order pending/expired events after successful settlement.
   if (payment.status === 'success') {
     try {
-      await deps.markEventProcessed(transactionId);
+      await deps.markEventProcessed(eventKey);
     } catch {
-      await deps.deleteEvent(transactionId);
+      await deps.deleteEvent(eventKey);
       return { status: 500, body: 'DB_ERROR', activationCalled: false };
     }
     return { status: 200, body: 'OK (already settled)', activationCalled: false };
@@ -124,7 +132,7 @@ export async function processMidtransEvent(body: WebhookBody, deps: WebhookDeps)
       // (lihat komentar FIX 23 Agustus 2026 di index.ts). payments.status
       // SENGAJA belum diupdate sampai titik ini supaya retry berikutnya masih
       // melihat wasAlreadySuccess=false dan mencoba aktivasi lagi.
-      await deps.deleteEvent(transactionId);
+      await deps.deleteEvent(eventKey);
       return { status: 500, body: 'ACTIVATION_ERROR', activationCalled };
     }
   }
@@ -133,11 +141,11 @@ export async function processMidtransEvent(body: WebhookBody, deps: WebhookDeps)
     if (newStatus) {
       await deps.updatePaymentStatus(payment.id, newStatus);
     }
-    await deps.markEventProcessed(transactionId);
+    await deps.markEventProcessed(eventKey);
   } catch {
     // The event must remain retryable if either the status write or event
     // acknowledgement failed; never answer HTTP 200 on a database outage.
-    await deps.deleteEvent(transactionId);
+    await deps.deleteEvent(eventKey);
     return { status: 500, body: 'DB_ERROR', activationCalled };
   }
   return { status: 200, body: 'OK', activationCalled };
