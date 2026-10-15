@@ -7,11 +7,13 @@ on:
       - 'supabase/functions/**'
       - 'supabase/migrations/**'
       - 'scripts/verify-worker-boundaries.mjs'
+      - '.github/workflows/test-edge-functions.yml'
   pull_request:
     paths:
       - 'supabase/functions/**'
       - 'supabase/migrations/**'
       - 'scripts/verify-worker-boundaries.mjs'
+      - '.github/workflows/test-edge-functions.yml'
   workflow_dispatch: {}
 
 jobs:
