@@ -16,7 +16,7 @@ function makeQuery(response: RecordResponse) {
 }
 
 function clientWithResponses(records: Record<string, RecordResponse>) {
-  const signOut = vi.fn(async () => ({ error: null }))
+  const signOut = vi.fn(async (): Promise<{ error: Error | null }> => ({ error: null }))
   const from = vi.fn((table: string) => {
     const record = records[table]
     if (!record) throw new Error('unexpected table: ' + table)
