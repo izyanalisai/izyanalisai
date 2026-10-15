@@ -1,24 +1,15 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { classifySignalStatus } from './logic.ts';
+import { rejectUnauthorizedWorker } from '../_shared/worker-auth.ts';
 Deno.serve(async (req)=>{
   const supabase = createClient(Deno.env.get('SUPABASE_URL'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'));
-  const providedSecret = req.headers.get('x-worker-secret');
-  const { data: secretRow, error: secretError } = await supabase.from('internal_secrets').select('value').eq('key', 'worker_shared_secret').maybeSingle();
-  if (secretError) {
-    return new Response(JSON.stringify({
-      error: 'gagal cek worker secret',
-      detail: secretError.message
-    }), {
-      status: 500
-    });
-  }
-  if (!providedSecret || !secretRow || providedSecret !== secretRow.value) {
-    return new Response(JSON.stringify({
-      error: 'unauthorized'
-    }), {
-      status: 401
-    });
-  }
+  const denied = await rejectUnauthorizedWorker(req, async () => {
+    const { data, error } = await supabase.from('internal_secrets')
+      .select('value').eq('key', 'worker_shared_secret').maybeSingle();
+    if (error) throw new Error('WORKER_SECRET_LOOKUP_FAILED');
+    return data?.value;
+  });
+  if (denied) return denied;
   const { data: signals, error: sigErr } = await supabase.from('signals').select('id, stock_id, direction, tp1, tp2, stop_loss, status, expires_at').in('status', [
     'ACTIVE',
     'HIT_TP1'
