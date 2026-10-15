@@ -28,3 +28,30 @@ export async function hasValidWorkerSecret(
 ): Promise<boolean> {
   return hasValidSecretHeader(request, expected, 'x-worker-secret')
 }
+
+/**
+ * Authorize service-role scheduled jobs, including safely handling a missing
+ * or temporarily unavailable configured secret. Never run the privileged
+ * operation or reveal provider/database details to an unauthenticated caller.
+ */
+export async function rejectUnauthorizedWorker(
+  request: Request,
+  lookupSecret: () => Promise<string | null | undefined>,
+): Promise<Response | null> {
+  if (!request.headers.get('x-worker-secret')) {
+    return new Response('UNAUTHORIZED', { status: 401 })
+  }
+  let expected: string | null | undefined
+  try {
+    expected = await lookupSecret()
+  } catch {
+    return new Response('WORKER_UNAVAILABLE', { status: 503 })
+  }
+  if (!expected || expected.length < 32) {
+    return new Response('WORKER_UNAVAILABLE', { status: 503 })
+  }
+  if (!(await hasValidWorkerSecret(request, expected))) {
+    return new Response('UNAUTHORIZED', { status: 401 })
+  }
+  return null
+}
