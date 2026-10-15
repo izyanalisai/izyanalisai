@@ -9,8 +9,8 @@ import PlexusBackground from '@/components/PlexusBackground'
 // Dokumen 4.1 Splash:
 // - Logo fade + scale, tagline, loading text crossfade, ~2 detik atau
 //   sampai pengecekan login selesai.
-// - Redirect: first open -> Onboarding. Onboarding selesai tapi belum
-//   login -> Landing. Sudah login -> Home.
+// - Anonymous visitors may continue to public Home without creating an
+//   account. Authenticated visitors keep their profile flow.
 export default function SplashPage() {
   const router = useRouter()
   const [visible, setVisible] = useState(false)
@@ -26,10 +26,9 @@ export default function SplashPage() {
         data: { user },
       } = await supabase.auth.getUser()
 
-      let destination = '/onboarding'
-      if (onboardingDone) {
-        destination = user ? await getPostLoginPath(supabase, user.id) : '/landing'
-      }
+      const destination = user
+        ? await getPostLoginPath(supabase, user.id)
+        : onboardingDone ? '/' : '/onboarding'
 
       const elapsed = Date.now() - start
       const remaining = Math.max(0, 2000 - elapsed)
