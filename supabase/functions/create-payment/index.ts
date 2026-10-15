@@ -114,6 +114,26 @@ Deno.serve(async (req)=>{
       status: 500
     });
   }
+  // Never create a second provider order while one may still be payable.
+  // The partial unique index on payments.user_id (status='pending') closes
+  // concurrent request races that the read-before-insert cannot prevent.
+  const { data: existing, error: existingErr } = await admin.from('payments')
+    .select('id,external_payment_id')
+    .eq('user_id', user.id).eq('status', 'pending')
+    .order('created_at', { ascending: false }).limit(1);
+  if (existingErr) {
+    return new Response(JSON.stringify({ error: 'PAYMENT_STATE_UNAVAILABLE' }), {
+      status: 503, headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (existing?.length) {
+    return new Response(JSON.stringify({
+      error: 'PENDING_PAYMENT_EXISTS',
+      payment_id: existing[0].id,
+      order_id: existing[0].external_payment_id,
+      retry_instruction: 'Reconcile the existing Midtrans order before trying again',
+    }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+  }
   const orderId = `IZY-${crypto.randomUUID()}`;
   const { data: payment, error: payErr } = await admin.from('payments').insert({
     user_id: user.id,
@@ -123,11 +143,16 @@ Deno.serve(async (req)=>{
     external_payment_id: orderId
   }).select().single();
   if (payErr || !payment) {
-    return new Response(JSON.stringify({
-      error: 'FAILED_TO_CREATE_PAYMENT',
-      detail: payErr?.message
-    }), {
-      status: 500
+    // A concurrent request may have won the unique pending-order slot.
+    // Never make another Midtrans call for the losing request.
+    if (payErr?.code === '23505') {
+      return new Response(JSON.stringify({ error: 'PENDING_PAYMENT_EXISTS' }), {
+        status: 409, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    console.error('[create-payment] failed to persist payment intent');
+    return new Response(JSON.stringify({ error: 'FAILED_TO_CREATE_PAYMENT' }), {
+      status: 503, headers: { 'Content-Type': 'application/json' },
     });
   }
   const snapBase = isProduction ? 'https://app.midtrans.com/snap/v1/transactions' : 'https://app.sandbox.midtrans.com/snap/v1/transactions';
