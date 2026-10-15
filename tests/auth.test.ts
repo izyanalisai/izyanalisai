@@ -155,6 +155,19 @@ describe('deleted-account authorization at the page boundary', () => {
     expect(response.headers.get('location')).not.toContain('database')
   })
 
+  it('denies protected pages when an authenticated user has no profile row', async () => {
+    mocks.createServerClient.mockImplementation(() => ({
+      auth: { getUser: async () => ({ data: { user: { id: 'missing-profile' } } }) },
+      from: () => ({
+        select: () => ({ eq: () => ({ maybeSingle: async () => ({
+          data: null, error: null,
+        }) }) }),
+      }),
+    }))
+    const response = await middleware(new NextRequest('https://example.com/watchlist'))
+    expect(response.headers.get('location')).toBe('https://example.com/login?error=profile_unavailable')
+  })
+
   it('permits active users without granting non-admin access to /admin', async () => {
     const select = vi.fn(() => ({
       eq: () => ({ maybeSingle: async () => ({
