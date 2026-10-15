@@ -1,4 +1,4 @@
-import { hasValidWorkerSecret, hasValidSecretHeader } from './worker-auth.ts'
+import { hasValidWorkerSecret, hasValidSecretHeader, rejectUnauthorizedWorker } from './worker-auth.ts'
 
 const secret = 'worker-auth-test-secret-with-adequate-entropy-123'
 
@@ -48,4 +48,42 @@ Deno.test('Telegram signature header is mandatory and checked independently', as
   const unsigned = new Request('https://example.invalid/telegram', { method: 'POST' })
   if (await hasValidSecretHeader(unsigned, secret, 'x-telegram-bot-api-secret-token'))
     throw new Error('unsigned Telegram webhook permitted')
+})
+
+Deno.test('privileged worker guard denies absent header without reading database', async () => {
+  let lookedUp = false
+  const request = new Request('https://example.invalid/job')
+  const response = await rejectUnauthorizedWorker(request, async () => {
+    lookedUp = true
+    return secret
+  })
+  if (response?.status !== 401 || lookedUp) throw new Error('Missing header did not fail early')
+})
+
+Deno.test('privileged worker guard fails closed on secret-storage outage', async () => {
+  const request = new Request('https://example.invalid/job', {
+    headers: {'x-worker-secret': secret},
+  })
+  const response = await rejectUnauthorizedWorker(request, async () => {
+    throw new Error('Secret storage is offline')
+  })
+  if (response?.status !== 503) throw new Error('Secret-storage outage permitted a worker')
+})
+
+Deno.test('privileged worker guard rejects invalid and weak stored secrets', async () => {
+  const request = new Request('https://example.invalid/job', {
+    headers: {'x-worker-secret': secret},
+  })
+  if ((await rejectUnauthorizedWorker(request, async () => 'short'))?.status !== 503)
+    throw new Error('Weak configured credential permitted')
+  if ((await rejectUnauthorizedWorker(request, async () => secret.replace('123', '456')))?.status !== 401)
+    throw new Error('Invalid worker credential permitted')
+})
+
+Deno.test('privileged worker guard admits an exactly matching authorized worker', async () => {
+  const request = new Request('https://example.invalid/job', {
+    headers: {'x-worker-secret': secret},
+  })
+  if ((await rejectUnauthorizedWorker(request, async () => secret)) !== null)
+    throw new Error('Authorized worker rejected')
 })
