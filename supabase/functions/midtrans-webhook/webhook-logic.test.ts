@@ -296,3 +296,36 @@ Deno.test('Database lookup outage returns 500 and preserves retryable event stat
   assertEquals(getActivationCallCount(), 0);
   assertEquals(getPaymentStatus('ORDER-1'), 'pending');
 });
+
+
+Deno.test('Signed unknown status is rejected before claiming an event', async () => {
+  const { deps, getActivationCallCount, getPaymentStatus } = makeFakeDeps();
+  let inserts = 0;
+  const insert = deps.insertEvent;
+  deps.insertEvent = async (...args) => {
+    inserts++;
+    return insert(...args);
+  };
+  const unknown = successEvent('TXN-UNRECOGNIZED');
+  unknown.transaction_status = 'authorize';
+  const first = await processMidtransEvent(unknown, deps);
+  const retry = await processMidtransEvent(unknown, deps);
+  assertEquals(first.status, 422);
+  assertEquals(first.body, 'PAYMENT_STATUS_UNRECOGNIZED');
+  assertEquals(retry.status, 422);
+  assertEquals(inserts, 0);
+  assertEquals(getActivationCallCount(), 0);
+  assertEquals(getPaymentStatus('ORDER-1'), 'pending');
+});
+
+Deno.test('Fraud-challenged capture does not become an acknowledged payment', async () => {
+  const { deps, getActivationCallCount, getPaymentStatus } = makeFakeDeps();
+  const challenge = successEvent('TXN-FRAUD-CHALLENGE');
+  challenge.transaction_status = 'capture';
+  challenge.fraud_status = 'challenge';
+  const outcome = await processMidtransEvent(challenge, deps);
+  assertEquals(outcome.status, 422);
+  assertEquals(outcome.body, 'PAYMENT_STATUS_UNRECOGNIZED');
+  assertEquals(getActivationCallCount(), 0);
+  assertEquals(getPaymentStatus('ORDER-1'), 'pending');
+});
