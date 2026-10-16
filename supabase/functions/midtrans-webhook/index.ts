@@ -66,6 +66,12 @@ Deno.serve(async (req)=>{
       });
       return { error: error ? { code: error.code } : null };
     },
+    async isEventProcessed(eventKey) {
+      const { data, error } = await admin.from('payment_events')
+        .select('processed_at').eq('external_event_id', eventKey).maybeSingle();
+      if (error) throw new Error('PAYMENT_EVENT_STATE_UNAVAILABLE');
+      return data ? data.processed_at !== null : null;
+    },
     async findPaymentByOrderId(oid) {
       const { data, error } = await admin.from('payments').select('id, status, amount').eq('external_payment_id', oid).maybeSingle();
       if (error) throw new Error('PAYMENT_LOOKUP_FAILED');
@@ -80,8 +86,10 @@ Deno.serve(async (req)=>{
       return { error };
     },
     async markEventProcessed(txId) {
-      const { error } = await admin.from('payment_events').update({ processed_at: new Date().toISOString() }).eq('external_event_id', txId);
-      if (error) throw new Error('PAYMENT_EVENT_ACK_FAILED');
+      const { data, error } = await admin.from('payment_events')
+        .update({ processed_at: new Date().toISOString() })
+        .eq('external_event_id', txId).select('external_event_id').maybeSingle();
+      if (error || !data) throw new Error('PAYMENT_EVENT_ACK_FAILED');
     },
     async deleteEvent(txId) {
       await admin.from('payment_events').delete().eq('external_event_id', txId);
