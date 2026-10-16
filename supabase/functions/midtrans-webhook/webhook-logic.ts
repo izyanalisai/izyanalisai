@@ -69,6 +69,13 @@ export async function processMidtransEvent(body: WebhookBody, deps: WebhookDeps)
   const transactionId = String(body.transaction_id ?? '');
   const transactionStatus = String(body.transaction_status ?? '');
   const fraudStatus = String(body.fraud_status ?? '');
+  const newStatus = resolvePaymentStatus({ transactionStatus, fraudStatus });
+  // A valid signature authenticates the sender, not the semantic meaning of
+  // an unknown or fraud-challenged transaction. Never acknowledge such an
+  // event as processed or claim it in the idempotency ledger.
+  if (newStatus === null) {
+    return { status: 422, body: 'PAYMENT_STATUS_UNRECOGNIZED', activationCalled: false };
+  }
 
   // Midtrans reuses transaction_id as an order moves from pending to
   // settlement. Deduplicating only transaction_id permanently suppresses that
@@ -126,7 +133,6 @@ export async function processMidtransEvent(body: WebhookBody, deps: WebhookDeps)
   // diupdate setelah aktivasi terbukti berhasil (atau untuk status non-success
   // yang tidak punya masalah ini).
   const wasAlreadySuccess = payment.status === 'success';
-  const newStatus = resolvePaymentStatus({ transactionStatus, fraudStatus });
 
   let activationCalled = false;
   if (newStatus === 'success' && !wasAlreadySuccess) {
@@ -144,9 +150,7 @@ export async function processMidtransEvent(body: WebhookBody, deps: WebhookDeps)
   }
 
   try {
-    if (newStatus) {
-      await deps.updatePaymentStatus(payment.id, newStatus);
-    }
+    await deps.updatePaymentStatus(payment.id, newStatus);
     await deps.markEventProcessed(eventKey);
   } catch {
     // The event must remain retryable if either the status write or event
