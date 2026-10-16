@@ -50,6 +50,8 @@ export function paymentAmountMatches(providerAmount: unknown, orderAmount: numbe
 // mensimulasikan unique constraint payment_events.external_event_id.
 export interface WebhookDeps {
   insertEvent(transactionId: string, payload: unknown): Promise<InsertEventResult>;
+  /** Returns true only for a durably acknowledged event; null for a missing event. */
+  isEventProcessed(transactionId: string): Promise<boolean | null>;
   findPaymentByOrderId(orderId: string): Promise<PaymentRow | null>;
   updatePaymentStatus(paymentId: string, status: string): Promise<void>;
   activateSubscription(paymentId: string): Promise<{ error: unknown }>;
@@ -91,7 +93,17 @@ export async function processMidtransEvent(body: WebhookBody, deps: WebhookDeps)
   const { error: eventInsertErr } = await deps.insertEvent(eventKey, body);
   if (eventInsertErr) {
     if (eventInsertErr.code === '23505') {
-      return { status: 200, body: 'OK (already processed)', activationCalled: false };
+      // A unique claim may belong to a worker that crashed mid-activation.
+      // Duplicate ownership does not prove completion.
+      try {
+        const processed = await deps.isEventProcessed(eventKey);
+        if (processed === true) {
+          return { status: 200, body: 'OK (already processed)', activationCalled: false };
+        }
+      } catch {
+        return { status: 503, body: 'EVENT_STATE_UNAVAILABLE', activationCalled: false };
+      }
+      return { status: 503, body: 'EVENT_NOT_YET_PROCESSED', activationCalled: false };
     }
     return { status: 500, body: 'DB_ERROR', activationCalled: false };
   }
