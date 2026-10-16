@@ -251,20 +251,20 @@ async function getExpiry(tier, now, supabase) {
   const wibNow = new Date(now.getTime() + wibOffsetMs);
   const todayWibDateStr = `${wibNow.getUTCFullYear()}-${String(wibNow.getUTCMonth() + 1).padStart(2, '0')}-${String(wibNow.getUTCDate()).padStart(2, '0')}`;
   const tradingDaysAhead = tier === 'swing' ? 5 : 1;
-  let expiryDateStr;
   const { data, error } = await supabase.rpc('get_next_trading_day', {
     from_date: todayWibDateStr,
     trading_days_ahead: tradingDaysAhead
   });
-  if (error || !data) {
-    console.error('get_next_trading_day RPC gagal, fallback ke naive date math:', error);
-    const fallback = new Date(wibNow);
-    fallback.setUTCDate(fallback.getUTCDate() + tradingDaysAhead);
-    expiryDateStr = `${fallback.getUTCFullYear()}-${String(fallback.getUTCMonth() + 1).padStart(2, '0')}-${String(fallback.getUTCDate()).padStart(2, '0')}`;
-  } else {
-    expiryDateStr = data;
+  // Never substitute calendar-day arithmetic for exchange trading-day rules.
+  // A missing or invalid calendar result must not be published as an active signal.
+  if (error || typeof data !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(data)) {
+    throw new Error('TRADING_CALENDAR_UNAVAILABLE');
   }
-  const [y, m, d] = expiryDateStr.split('-').map(Number);
+  const [y, m, d] = data.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== data || data <= todayWibDateStr) {
+    throw new Error('TRADING_CALENDAR_INVALID_DATE');
+  }
   const expiryWib = new Date(Date.UTC(y, m - 1, d, 15, 30, 0));
   return new Date(expiryWib.getTime() - wibOffsetMs).toISOString();
 }
@@ -325,6 +325,22 @@ Deno.serve(async (req)=>{
     });
   }
   const jobRunId = jobRun.id;
+  let expiryIso;
+  try {
+    // Resolve the exchange calendar once per job, before modifying any signals.
+    expiryIso = await getExpiry(cfg.tier, now, supabase);
+  } catch (calendarError) {
+    const code = calendarError instanceof Error ? calendarError.message : 'TRADING_CALENDAR_UNAVAILABLE';
+    await supabase.from('job_runs').update({
+      status: 'ERROR',
+      finished_at: new Date().toISOString(),
+      detail: { error: code }
+    }).eq('id', jobRunId);
+    return new Response(JSON.stringify({ error: code }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
   const { data: stocks, error } = await supabase.from('stocks').select('id, ticker').eq('is_active', true).order('ticker').range(offset, offset + limit - 1);
   if (error || !stocks) {
     await supabase.from('job_runs').update({
@@ -474,7 +490,7 @@ Deno.serve(async (req)=>{
           resistance_level: resistanceZoneTp1.mid_price
         })) {
           await supabase.from('signals').update({
-            expires_at: await getExpiry(cfg.tier, now, supabase)
+            expires_at: expiryIso
           }).eq('id', oldActive[0].id);
           totalBuy++;
           recordEvent(stock.id, 'BUY', {
@@ -565,7 +581,7 @@ Deno.serve(async (req)=>{
             generated_at: now.toISOString()
           },
           triggered_at: now.toISOString(),
-          expires_at: await getExpiry(cfg.tier, now, supabase)
+          expires_at: expiryIso
         }).select('id').single();
         if (insErr || !inserted) {
           totalFailed++;
@@ -653,7 +669,7 @@ Deno.serve(async (req)=>{
           resistance_level: resistanceZone.mid_price
         })) {
           await supabase.from('signals').update({
-            expires_at: await getExpiry(cfg.tier, now, supabase)
+            expires_at: expiryIso
           }).eq('id', oldActive[0].id);
           totalSell++;
           recordEvent(stock.id, 'SELL', {
@@ -746,7 +762,7 @@ Deno.serve(async (req)=>{
             generated_at: now.toISOString()
           },
           triggered_at: now.toISOString(),
-          expires_at: await getExpiry(cfg.tier, now, supabase)
+          expires_at: expiryIso
         }).select('id').single();
         if (insErr || !inserted) {
           totalFailed++;
