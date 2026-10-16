@@ -1,27 +1,67 @@
 # IzyAnalisAi
 
-A web application for AI-assisted technical analysis of Indonesian stocks, built with Next.js 16, React 19, Tailwind CSS, Supabase, and Cloudflare/OpenNext.
+> **Research Indonesian stocks using technical signals, market context, and AI-assisted analysis in one workspace.**
 
-## Implemented application areas
+IzyAnalisAi is a web application for researching listed Indonesian equities. It brings together stock data, technical signal workflows, watchlists, trading plans, market news, and AI-assisted explanations. It is built with Next.js 16, React 19, Tailwind CSS, Supabase, and Cloudflare/OpenNext.
 
-The repository includes authentication/onboarding, risk profiles, stock detail pages, watchlists, technical signals and signal history, trading plans, AI chat/chart analysis, news/calendar screens, subscriptions, and an admin interface. Supabase functions implement background market-data processing, signal evaluation, and payment-webhook handling. Code presence alone does not prove live service availability or trading accuracy.
+## What users can do
 
-## Local setup
+| Product area | User action | Result in the application |
+| --- | --- | --- |
+| Stock research | Open stock detail and market views | A consolidated research view for the selected equity |
+| Watchlist | Track stocks of interest | A personal list for returning to relevant symbols |
+| Technical signals | Inspect calculated signals and history | Signal records and context for review |
+| Risk profile & trading plan | Set risk preferences and examine a plan | A structured plan and related risk context |
+| AI assistant | Ask questions or request chart analysis | AI-generated explanations or chart interpretation when a provider is configured |
+| Market context | Review news, trending reasons, and calendar screens | Additional inputs to evaluate alongside technical signals |
+| Account & subscriptions | Use onboarding, subscriptions, and billing flows | Account, entitlement, and payment-related application states |
+| Administration | Access authorized admin routes | Management tools governed by application roles |
 
-Use Node.js 24 LTS, matching CI and the Cloudflare build environment. The installed Supabase and Cloudflare tooling requires Node.js 22 or newer.
+## Example research workflow
+
+1. Open a stock detail page and inspect the market context.
+2. Review technical signals, their recorded history, and applicable risk parameters.
+3. Add relevant symbols to a watchlist and prepare a trading plan.
+4. Use the AI assistant to summarize a chart or related news.
+5. Make the final decision independently. AI text and signals are research aids, not a promise of returns.
+
+## Application architecture
+
+- **Frontend:** Next.js App Router, React, and Tailwind CSS.
+- **Data and accounts:** Supabase authentication, database tables, and authorization policies.
+- **Business logic:** Supabase Edge Functions for market-data processing, signal evaluation, AI features, and billing webhooks.
+- **AI:** a configurable server-side provider adapter supporting OpenAI, xAI/Grok, compatible gateways, and the existing legacy provider path.
+- **Delivery:** Cloudflare/OpenNext build and deployment workflows.
+
+The AI adapter is used by `chat-asisten-ai`, `analyze-chart`, `generate-signal-reasoning`, `generate-trending-reason`, and `fetch-news`. Deterministic signal-engine rules remain responsible for numeric price levels; language-model output does not replace that logic.
+
+## Run locally
+
+Use **Node.js 24 LTS** and install dependencies from the repository root.
 
 ```bash
 npm ci
 cp .env.example .env.local
-# Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.
+# Configure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY
 npm run dev
 ```
 
-Configure Supabase authentication redirect URLs for `/auth/callback` on your local and deployed origins. OAuth sign-in also requires the relevant provider configuration in Supabase. Public configuration belongs in `NEXT_PUBLIC_*`; never put a service-role key or provider secret there.
+Configure Supabase authentication callback URLs for `/auth/callback`. OAuth providers need their own Supabase configuration. The application requires the corresponding database schema and Edge Functions for data-backed features.
 
-The frontend requires the matching Supabase schema and configured edge functions. Archived migrations are historical records and should not be blindly replayed against a live database. Server credentials belong in the appropriate Supabase or deployment secret store.
+## Configure an AI provider
 
-## Verification
+Place credentials in **Supabase Edge Function secrets**, never in a `NEXT_PUBLIC_*` environment variable.
+
+| Provider | Server-side configuration |
+| --- | --- |
+| OpenAI | `AI_PROVIDER=openai`, `AI_MODEL`, `OPENAI_API_KEY` |
+| xAI/Grok | `AI_PROVIDER=xai`, `AI_MODEL`, `XAI_API_KEY` |
+| Compatible HTTPS gateway | `AI_PROVIDER=compatible`, `AI_MODEL`, `AI_API_KEY`, `AI_PROVIDER_BASE_URL` |
+| Existing configured path | `AI_PROVIDER=legacy` or unset |
+
+Set `AI_VISION_MODEL` separately to a supported image-capable model for chart-image analysis. Optional controls include `AI_MAX_TOKENS`, `AI_TIMEOUT_MS`, and `AI_TOKEN_PARAMETER`. Select a model available in your provider account. Provider requests are bounded and do not silently retry via another paid provider.
+
+## Checks
 
 ```bash
 npm test
@@ -30,32 +70,8 @@ npm run lint -- --max-warnings=0
 npm run build
 ```
 
-Auth regression tests verify cookie preservation on redirects, callback cookie parsing, failed exchanges, and the public/worker-route bypass. These tests mock Supabase; they do not replace live OAuth testing or database authorization checks. `Web Checks` runs tests, TypeScript, lint, and a build using placeholder public configuration. Cloudflare deployment is a manual GitHub Actions workflow while its external Cloudflare and Supabase secrets are not configured. It checks for required configuration before building; an empty secret is an external setup blocker, not a reason to inject placeholder production credentials. `Web Checks` continues automatically on every push to `main`.
+Frontend and Edge Function test workflows cover defined contracts and application logic. Local mock-based results do not establish live market-data accuracy, payment settlement, external AI model quality, or production uptime.
 
-Edge-function tests are configured in `.github/workflows/test-edge-functions.yml`. Payment tests and signal lifecycle tests are separate from the frontend suite. Live Supabase, market data, AI providers, billing, notification delivery, and Cloudflare deployments require their actual configuration and additional integration verification.
+## Security and usage boundaries
 
-## Deployment and access controls
-
-The existing workflows use Cloudflare and Supabase secrets. Do not commit `.env.local` or secret values. Cookie-based middleware routes anonymous users to the landing page and checks admin profiles, while preserving session refresh/clear cookies on redirects. Supabase RLS and individual edge-function authentication must enforce data access; frontend routing alone is not an authorization boundary.
-
-This project is suitable for describing implemented AI application integration in a portfolio. No claim of audited trading accuracy, investment returns, or production readiness is made here.
-
-## Select OpenAI / xAI Grok for AI features
-
-Set **server-side Supabase Edge Function secrets**, not frontend `NEXT_PUBLIC_*` variables:
-
-| Provider | Required secrets/configuration |
-| --- | --- |
-| OpenAI | `AI_PROVIDER=openai`, `AI_MODEL=<available-model-id>`, `OPENAI_API_KEY=<server-secret>` |
-| xAI/Grok | `AI_PROVIDER=xai`, `AI_MODEL=<available-model-id>`, `XAI_API_KEY=<server-secret>` |
-| Compatible gateway | `AI_PROVIDER=compatible`, `AI_MODEL=<model-id>`, `AI_API_KEY=<server-secret>`, `AI_PROVIDER_BASE_URL=<https-api-base>` |
-
-Set `AI_VISION_MODEL` separately to an image-capable model for chart analysis and chat with images. A text-model setting alone does not enable vision. Choose model IDs available to your provider account; no paid model is auto-selected.
-
-The shared adapter is connected to `chat-asisten-ai`, `analyze-chart`, `generate-signal-reasoning`, `generate-trending-reason`, and `fetch-news`. If `AI_PROVIDER` is unset or `legacy`, the existing Cloudflare/9Router/OpenRouter chain is retained. Selecting a cloud provider sends one request to that provider without silently retrying or falling back to another paid provider. Errors continue through each feature's existing error/refund handling.
-
-Optional controls: `AI_MAX_TOKENS` (default 2048, maximum 16384), `AI_TIMEOUT_MS` (default 30000), and `AI_TOKEN_PARAMETER` (`max_tokens` or `max_completion_tokens`). Temperature is omitted. OpenAI uses the official OpenAI API origin; xAI uses `https://api.x.ai/v1`. Use `compatible` for custom HTTPS gateways. The API base is normalized without duplicating `/v1`.
-
-Provider tests validate endpoint/key selection, model configuration, payloads, usage parsing, bounded single requests, and rejection of refused/truncated outputs using mocked HTTP. Live model quality, chart accuracy, and Supabase deployment still need actual credentials and integration tests. The existing deterministic signal-engine rules remain authoritative for price levels; model-generated text does not replace them.
-
-References: [OpenAI API](https://developers.openai.com/api/docs/guides/structured-outputs), [xAI API](https://docs.x.ai/developers/model-capabilities/text/structured-outputs).
+Protect Supabase credentials and payment/provider secrets server-side. Cookie-based route handling is not a substitute for Supabase RLS or Edge Function authorization. The software presents research and application workflows; it does not guarantee an investment outcome or represent verified financial advice. Real-world service behavior depends on properly configured and independently tested providers and infrastructure.
