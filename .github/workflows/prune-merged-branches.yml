@@ -44,7 +44,7 @@ jobs:
           }
 
           def api(method, path):
-              request = Request(base + "/" + path, headers=headers, method=method)
+              request = Request(base + ("/" + path if path else ""), headers=headers, method=method)
               with urlopen(request, timeout=30) as response:
                   payload = response.read()
                   return json.loads(payload) if payload else None
