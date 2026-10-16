@@ -12,6 +12,7 @@ import { processMidtransEvent, type WebhookDeps, type WebhookBody } from './webh
 // Postgres.
 function makeFakeDeps(opts?: { activationFails?: boolean; statusUpdateFails?: boolean; eventAckFails?: boolean; paymentLookupFails?: boolean }) {
   const processedEvents = new Set<string>();
+  const completedEvents = new Set<string>();
   const payments = new Map<string, { id: string; status: string; amount: number; order_id: string }>();
   payments.set('ORDER-1', { id: 'pay_1', status: 'pending', amount: 59000, order_id: 'ORDER-1' });
   let activationCallCount = 0;
@@ -23,6 +24,10 @@ function makeFakeDeps(opts?: { activationFails?: boolean; statusUpdateFails?: bo
       }
       processedEvents.add(transactionId);
       return { error: null };
+    },
+    async isEventProcessed(transactionId) {
+      if (!processedEvents.has(transactionId)) return null;
+      return completedEvents.has(transactionId);
     },
     async findPaymentByOrderId(orderId) {
       if (opts?.paymentLookupFails) throw new Error('Database unavailable');
@@ -42,11 +47,14 @@ function makeFakeDeps(opts?: { activationFails?: boolean; statusUpdateFails?: bo
       }
       return { error: null };
     },
-    async markEventProcessed() {
+    async markEventProcessed(transactionId) {
       if (opts?.eventAckFails) throw new Error('Synthetic event ACK outage');
+      if (!processedEvents.has(transactionId)) throw new Error('Event claim missing');
+      completedEvents.add(transactionId);
     },
     async deleteEvent(transactionId) {
       processedEvents.delete(transactionId);
+      completedEvents.delete(transactionId);
     },
   };
 
@@ -328,4 +336,33 @@ Deno.test('Fraud-challenged capture does not become an acknowledged payment', as
   assertEquals(outcome.body, 'PAYMENT_STATUS_UNRECOGNIZED');
   assertEquals(getActivationCallCount(), 0);
   assertEquals(getPaymentStatus('ORDER-1'), 'pending');
+});
+
+
+Deno.test('Duplicate unacknowledged Midtrans event must not return fake processed OK', async () => {
+  const { deps, getActivationCallCount } = makeFakeDeps();
+  const originalInsert = deps.insertEvent;
+  let firstClaim = true;
+  deps.insertEvent = async (key, payload) => {
+    if (firstClaim) {
+      firstClaim = false;
+      await originalInsert(key, payload); // prior invocation crashed before status update
+    }
+    return originalInsert(key, payload);
+  };
+  const result = await processMidtransEvent(successEvent('TXN-CRASHED-CLAIM'), deps);
+  assertEquals(result.status, 503);
+  assertEquals(result.body, 'EVENT_NOT_YET_PROCESSED');
+  assertEquals(result.activationCalled, false);
+  assertEquals(getActivationCallCount(), 0);
+});
+
+Deno.test('Duplicate event state lookup outage must fail closed', async () => {
+  const { deps, getActivationCallCount } = makeFakeDeps();
+  deps.insertEvent = async () => ({ error: { code: '23505' } });
+  deps.isEventProcessed = async () => { throw new Error('database unavailable'); };
+  const result = await processMidtransEvent(successEvent('TXN-STATE-OUTAGE'), deps);
+  assertEquals(result.status, 503);
+  assertEquals(result.body, 'EVENT_STATE_UNAVAILABLE');
+  assertEquals(getActivationCallCount(), 0);
 });
