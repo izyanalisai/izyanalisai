@@ -1,11 +1,27 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { verifyAdMobSignature } from './verification.ts';
+import { parseSignedCallback, verifyAdMobSignature } from './verification.ts';
 
 // Google AdMob rewarded-ad server-side callback. Nothing is credited until
 // Google's DER signature is verified over the original signed query bytes.
 // Reference: https://developers.google.com/admob/android/ssv
 const VERIFIER_KEYS_URL = 'https://www.gstatic.com/admob/reward/verifier-keys.json';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+type KeyDocument = { keys?: { keyId: number | string; base64: string }[] };
+let cachedKeys: { value: KeyDocument; expiresAt: number } | null = null;
+const KEY_CACHE_MS = 30 * 60 * 1000; // Well below Google's 24-hour maximum.
+
+async function getVerifierKeys(): Promise<KeyDocument> {
+  if (cachedKeys && Date.now() < cachedKeys.expiresAt) return cachedKeys.value;
+  const result = await fetch(VERIFIER_KEYS_URL, {
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!result.ok) throw new Error('VERIFIER_KEYS_UNAVAILABLE');
+  const value: KeyDocument = await result.json();
+  if (!Array.isArray(value?.keys) || value.keys.length === 0 ||
+      value.keys.length > 128) throw new Error('INVALID_VERIFIER_KEY_DOCUMENT');
+  cachedKeys = { value, expiresAt: Date.now() + KEY_CACHE_MS };
+  return value;
+}
 
 Deno.serve(async (req) => {
   if (req.method !== 'GET') return new Response('METHOD_NOT_ALLOWED', { status: 405 });
@@ -18,13 +34,16 @@ Deno.serve(async (req) => {
     return new Response('INVALID_CALLBACK', { status: 400 });
   }
 
+  // Reject obviously invalid requests before contacting Google's key server.
+  try {
+    parseSignedCallback(req.url);
+  } catch {
+    return new Response('INVALID_CALLBACK', { status: 400 });
+  }
+
   let keys;
   try {
-    const result = await fetch(VERIFIER_KEYS_URL, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!result.ok) throw new Error('VERIFIER_KEYS_UNAVAILABLE');
-    keys = await result.json();
+    keys = await getVerifierKeys();
   } catch {
     return new Response('VERIFIER_KEYS_UNAVAILABLE', { status: 503 });
   }
