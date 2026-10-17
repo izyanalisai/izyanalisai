@@ -15,6 +15,9 @@ export async function getPostLoginPath(
     .maybeSingle()
 
   if (profileError) throw new Error('POST_LOGIN_PROFILE_UNAVAILABLE')
+  // Supabase Auth can succeed even when the application profile was not
+  // provisioned. Do not treat an absent authorization record as onboarding.
+  if (!profile) throw new Error('POST_LOGIN_PROFILE_NOT_FOUND')
 
   // Akun yang sudah minta hapus akun tidak boleh dipakai login lagi,
   // meski masih dalam masa pemulihan 30 hari.
