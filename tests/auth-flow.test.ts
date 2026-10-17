@@ -81,3 +81,12 @@ describe('deleted-account sign-out failures', () => {
     )
   })
 })
+
+
+describe('missing post-login authorization record', () => {
+  it('rejects a missing profile before onboarding or agreement lookups', async () => {
+    const { client, from } = clientWithResponses({ profiles: clean(null) })
+    await expect(getPostLoginPath(client, 'user-1')).rejects.toThrow('POST_LOGIN_PROFILE_NOT_FOUND')
+    expect(from).not.toHaveBeenCalledWith('agreements')
+  })
+})
